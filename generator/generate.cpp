@@ -22,11 +22,24 @@
 #include <filesystem>
 #include <memory>
 #include <fstream>
+#include <cctype>
+#include <condition_variable>
+#include <cstdlib>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <utility>
 
 // Apache Arrow & Parquet Headers
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <parquet/arrow/reader.h>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 using namespace std;
 using namespace std::chrono;
@@ -82,6 +95,231 @@ struct SimulationEvent {
         return event_time_us > other.event_time_us;
     }
 };
+
+struct DateRange {
+    int start_year;
+    int start_month;
+    int end_year;
+    int end_month;
+};
+
+struct SimulationConfig {
+    double playback_speed = 100.0;
+    DateRange range{2020, 1, 2024, 4};
+    string data_path = "../data/taxi_data_preprocessed";
+    string ingestion_url = "http://localhost:8080/ingest";
+};
+
+static string trim_copy(const string& value) {
+    size_t start = value.find_first_not_of(" \t\r\n");
+    if (start == string::npos) return "";
+    size_t end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+static string to_lower_copy(string value) {
+    transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(tolower(ch));
+    });
+    return value;
+}
+
+static bool parse_year_month_value(const string& value, int& year, int& month) {
+    string trimmed = trim_copy(value);
+    if (trimmed.size() >= 2 && trimmed.front() == '"' && trimmed.back() == '"') {
+        trimmed = trimmed.substr(1, trimmed.size() - 2);
+    }
+    if (trimmed.size() != 7 || trimmed[4] != '-') return false;
+    if (!isdigit(static_cast<unsigned char>(trimmed[0])) ||
+        !isdigit(static_cast<unsigned char>(trimmed[1])) ||
+        !isdigit(static_cast<unsigned char>(trimmed[2])) ||
+        !isdigit(static_cast<unsigned char>(trimmed[3])) ||
+        !isdigit(static_cast<unsigned char>(trimmed[5])) ||
+        !isdigit(static_cast<unsigned char>(trimmed[6]))) {
+        return false;
+    }
+    int y = stoi(trimmed.substr(0, 4));
+    int m = stoi(trimmed.substr(5, 2));
+    if (m < 1 || m > 12) return false;
+    year = y;
+    month = m;
+    return true;
+}
+
+static SimulationConfig load_config(const string& path) {
+    SimulationConfig config;
+    ifstream file(path);
+    if (!file.is_open()) {
+        cerr << "[Config] Using defaults (file not found: " << path << ")" << endl;
+        const char* env_url = getenv("INGEST_URL");
+        if (env_url && *env_url) config.ingestion_url = env_url;
+        return config;
+    }
+
+    string line;
+    while (getline(file, line)) {
+        string trimmed = trim_copy(line);
+        if (trimmed.empty() || trimmed[0] == '#') continue;
+        size_t eq = trimmed.find('=');
+        if (eq == string::npos) continue;
+
+        string key = to_lower_copy(trim_copy(trimmed.substr(0, eq)));
+        string value = trim_copy(trimmed.substr(eq + 1));
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        }
+
+        if (key == "playback_speed") {
+            try {
+                config.playback_speed = stod(value);
+            } catch (...) {
+            }
+        } else if (key == "start" || key == "start_date") {
+            int year = 0;
+            int month = 0;
+            if (parse_year_month_value(value, year, month)) {
+                config.range.start_year = year;
+                config.range.start_month = month;
+            }
+        } else if (key == "end" || key == "end_date") {
+            int year = 0;
+            int month = 0;
+            if (parse_year_month_value(value, year, month)) {
+                config.range.end_year = year;
+                config.range.end_month = month;
+            }
+        } else if (key == "data_path") {
+            if (!value.empty()) config.data_path = value;
+        } else if (key == "ingestion_url" || key == "ingest_url") {
+            if (!value.empty()) config.ingestion_url = value;
+        }
+    }
+
+    const char* env_url = getenv("INGEST_URL");
+    if (env_url && *env_url) config.ingestion_url = env_url;
+
+    return config;
+}
+
+class BoundedQueue {
+public:
+    explicit BoundedQueue(size_t capacity) : capacity_(capacity) {}
+
+    bool push(string item) {
+        unique_lock<mutex> lock(mu_);
+        not_full_.wait(lock, [&] { return closed_ || queue_.size() < capacity_; });
+        if (closed_) return false;
+        queue_.push_back(std::move(item));
+        not_empty_.notify_one();
+        return true;
+    }
+
+    bool pop(string& out) {
+        unique_lock<mutex> lock(mu_);
+        not_empty_.wait(lock, [&] { return closed_ || !queue_.empty(); });
+        if (queue_.empty()) return false;
+        out = std::move(queue_.front());
+        queue_.pop_front();
+        not_full_.notify_one();
+        return true;
+    }
+
+    void close() {
+        lock_guard<mutex> lock(mu_);
+        closed_ = true;
+        not_empty_.notify_all();
+        not_full_.notify_all();
+    }
+
+private:
+    size_t capacity_;
+    deque<string> queue_;
+    mutex mu_;
+    condition_variable not_full_;
+    condition_variable not_empty_;
+    bool closed_ = false;
+};
+
+struct HttpEndpoint {
+    string host;
+    string port;
+    string path;
+};
+
+static bool parse_http_url(const string& url, HttpEndpoint& out) {
+    const string prefix = "http://";
+    if (url.rfind(prefix, 0) != 0) return false;
+    string rest = url.substr(prefix.size());
+    size_t slash = rest.find('/');
+    string host_port = (slash == string::npos) ? rest : rest.substr(0, slash);
+    out.path = (slash == string::npos) ? "/" : rest.substr(slash);
+    size_t colon = host_port.find(':');
+    if (colon == string::npos) {
+        out.host = host_port;
+        out.port = "80";
+    } else {
+        out.host = host_port.substr(0, colon);
+        out.port = host_port.substr(colon + 1);
+        if (out.port.empty()) out.port = "80";
+    }
+    return !out.host.empty();
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+static bool send_all(int sock, const char* data, size_t len) {
+    const char* cursor = data;
+    size_t remaining = len;
+    while (remaining > 0) {
+        ssize_t sent = send(sock, cursor, remaining, 0);
+        if (sent <= 0) return false;
+        cursor += sent;
+        remaining -= static_cast<size_t>(sent);
+    }
+    return true;
+}
+
+static bool http_post_json(const HttpEndpoint& endpoint, const string& payload) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo* res = nullptr;
+    if (getaddrinfo(endpoint.host.c_str(), endpoint.port.c_str(), &hints, &res) != 0) {
+        return false;
+    }
+
+    int sock = -1;
+    for (addrinfo* rp = res; rp != nullptr; rp = rp->ai_next) {
+        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock == -1) continue;
+        if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) break;
+        close(sock);
+        sock = -1;
+    }
+    freeaddrinfo(res);
+    if (sock == -1) return false;
+
+    string request = "POST " + endpoint.path + " HTTP/1.1\r\n";
+    request += "Host: " + endpoint.host + "\r\n";
+    request += "Content-Type: application/json\r\n";
+    request += "Content-Length: " + to_string(payload.size()) + "\r\n";
+    request += "Connection: close\r\n\r\n";
+    request += payload;
+
+    bool ok = send_all(sock, request.data(), request.size());
+    if (ok) {
+        char buffer[512];
+        while (recv(sock, buffer, sizeof(buffer), 0) > 0) {
+        }
+    }
+    close(sock);
+    return ok;
+}
+#else
+static bool http_post_json(const HttpEndpoint&, const string&) {
+    return false;
+}
+#endif
+
 
 // ==========================================
 // 2. Helper Services (GPS & UUID)
@@ -201,14 +439,24 @@ private:
     vector<RawTripData> dataset; // In-memory storage
     GeoService geo_service;
     double playback_speed;
+    string ingestion_url;
+    HttpEndpoint ingestion_endpoint;
+    bool ingestion_endpoint_ok = false;
+    mutex log_mu;
     
     // Config
     const int64_t TRANSIT_UPDATE_INTERVAL_US = 30 * 1000000; // 30 seconds
+    const size_t PAYLOAD_QUEUE_CAPACITY = 4096;
 
 public:
-    UberSimulator(double speed) : playback_speed(speed) {
+    UberSimulator(double speed, string url) : playback_speed(speed), ingestion_url(std::move(url)) {
         // Reserve memory to prevent reallocation invalidating pointers
         dataset.reserve(1000000); 
+        ingestion_endpoint_ok = parse_http_url(ingestion_url, ingestion_endpoint);
+        if (!ingestion_endpoint_ok) {
+            lock_guard<mutex> lock(log_mu);
+            cerr << "[Config] Invalid ingestion_url; falling back to stdout." << endl;
+        }
     }
 
     // Add data to engine and generate sub-events
@@ -242,15 +490,41 @@ public:
             return;
         }
 
-        // Time Synchronization
-        int64_t sim_start_ts = event_queue.top().event_time_us;
-        auto wall_start = steady_clock::now();
-
         cout << ">>> Starting Simulation (Speed: " << playback_speed << "x) <<<" << endl;
+        int64_t sim_start_ts = event_queue.top().event_time_us;
         cout << ">>> First Event Time (Unix us): " << sim_start_ts << endl;
 
+        BoundedQueue payload_queue(PAYLOAD_QUEUE_CAPACITY);
+
+        size_t sender_count = thread::hardware_concurrency();
+        if (sender_count == 0) sender_count = 1;
+        sender_count *= 2;
+
+        vector<thread> senders;
+        senders.reserve(sender_count);
+        for (size_t i = 0; i < sender_count; ++i) {
+            senders.emplace_back([this, &payload_queue]() {
+                string payload;
+                while (payload_queue.pop(payload)) {
+                    post_payload(payload);
+                }
+            });
+        }
+
+        thread scheduler(&UberSimulator::schedule_events, this, std::ref(payload_queue), sim_start_ts);
+        scheduler.join();
+        for (auto& t : senders) {
+            t.join();
+        }
+        cout << ">>> Simulation Completed <<<" << endl;
+    }
+
+private:
+    void schedule_events(BoundedQueue& payload_queue, int64_t sim_start_ts) {
+        auto wall_start = steady_clock::now();
+
         while (!event_queue.empty()) {
-            const auto& ev = event_queue.top();
+            SimulationEvent ev = event_queue.top();
 
             // Calculate current simulation time
             auto now = steady_clock::now();
@@ -259,24 +533,24 @@ public:
             int64_t current_sim_ts = sim_start_ts + sim_elapsed_us;
 
             if (current_sim_ts >= ev.event_time_us) {
-                // Fire Event
-                send_network_request(ev);
+                string payload = build_payload(ev);
+                if (!payload_queue.push(std::move(payload))) {
+                    break;
+                }
                 event_queue.pop();
             } else {
-                // Sleep Management
-                double wait_sec = (double)(ev.event_time_us - current_sim_ts) / 1000000.0 / playback_speed;
                 // Sleep only if wait is significant (>1ms) to avoid CPU spin
+                double wait_sec = (double)(ev.event_time_us - current_sim_ts) / 1000000.0 / playback_speed;
                 if (wait_sec > 0.001) {
                     this_thread::sleep_for(duration<double>(wait_sec));
                 }
             }
         }
-        cout << ">>> Simulation Completed <<<" << endl;
+
+        payload_queue.close();
     }
 
-private:
-    // Network Sender Mock-up (Prints JSON)
-    void send_network_request(const SimulationEvent& ev) {
+    string build_payload(const SimulationEvent& ev) {
         stringstream json;
         const auto* d = ev.raw_data;
 
@@ -307,8 +581,19 @@ private:
         }
         json << "}";
 
-        // In real impl: CURL or Boost.Asio post here
-        cout << "[NET] " << json.str() << endl;
+        return json.str();
+    }
+
+    void post_payload(const string& payload) {
+        if (!ingestion_endpoint_ok) {
+            lock_guard<mutex> lock(log_mu);
+            cout << "[NET] " << payload << endl;
+            return;
+        }
+        if (!http_post_json(ingestion_endpoint, payload)) {
+            lock_guard<mutex> lock(log_mu);
+            cerr << "[NET] POST failed: " << ingestion_url << endl;
+        }
     }
 };
 
@@ -318,7 +603,7 @@ private:
 
 class ParquetLoader {
 public:
-    static void load_from_directory(const string& root_path, UberSimulator& sim) {
+    static void load_from_directory(const string& root_path, UberSimulator& sim, const DateRange& range) {
         if (!fs::exists(root_path)) {
             cerr << "Error: Directory not found -> " << root_path << endl;
             return;
@@ -326,6 +611,9 @@ public:
 
         for (const auto& entry : fs::recursive_directory_iterator(root_path)) {
             if (entry.is_regular_file() && entry.path().extension() == ".parquet") {
+                if (!is_in_date_range(entry.path().filename().string(), range)) {
+                    continue;
+                }
                 cout << "[Loader] Reading: " << entry.path().filename() << "... ";
                 load_file(entry.path().string(), sim);
                 cout << "Done." << endl;
@@ -334,6 +622,37 @@ public:
     }
 
 private:
+    static bool extract_year_month(const string& name, int& year, int& month) {
+        for (size_t i = 0; i + 6 < name.size(); ++i) {
+            if (!isdigit(static_cast<unsigned char>(name[i])) ||
+                !isdigit(static_cast<unsigned char>(name[i + 1])) ||
+                !isdigit(static_cast<unsigned char>(name[i + 2])) ||
+                !isdigit(static_cast<unsigned char>(name[i + 3])) ||
+                name[i + 4] != '-' ||
+                !isdigit(static_cast<unsigned char>(name[i + 5])) ||
+                !isdigit(static_cast<unsigned char>(name[i + 6]))) {
+                continue;
+            }
+            int y = stoi(name.substr(i, 4));
+            int m = stoi(name.substr(i + 5, 2));
+            if (m < 1 || m > 12) continue;
+            year = y;
+            month = m;
+            return true;
+        }
+        return false;
+    }
+
+    static bool is_in_date_range(const string& name, const DateRange& range) {
+        int year = 0;
+        int month = 0;
+        if (!extract_year_month(name, year, month)) return false;
+        int value = year * 12 + month;
+        int start = range.start_year * 12 + range.start_month;
+        int end = range.end_year * 12 + range.end_month;
+        return value >= start && value <= end;
+    }
+
     static int64_t timestamp_value_us(const shared_ptr<arrow::TimestampArray>& arr, int64_t i) {
         int64_t value = arr->Value(i);
         auto ts_type = static_pointer_cast<arrow::TimestampType>(arr->type());
@@ -565,16 +884,18 @@ private:
 // ==========================================
 
 int main(int argc, char** argv) {
-    // Configuration
-    double playback_speed = 100.0; // 100x Speed
-    string data_path = "../data/taxi_data_preprocessed";
+    string config_path = "config.txt";
+    if (argc > 1) {
+        config_path = argv[1];
+    }
+    SimulationConfig config = load_config(config_path);
 
     // Initialize Simulator
-    UberSimulator sim(playback_speed);
+    UberSimulator sim(config.playback_speed, config.ingestion_url);
 
     // Load Data
     cout << "=== Uber Data Generator Initializing ===" << endl;
-    ParquetLoader::load_from_directory(data_path, sim);
+    ParquetLoader::load_from_directory(config.data_path, sim, config.range);
 
     // Run
     sim.run();

@@ -1,0 +1,6 @@
+# Generator configuration
+# YYYY-MM format for date range
+start=2020-01
+end=2020-02
+playback_speed=5
+ingestion_url=http://localhost:8080/ingest
