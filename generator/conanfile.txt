@@ -1,0 +1,9 @@
+[requires]
+arrow/14.0.1
+
+[options]
+arrow/*:shared=True
+
+[generators]
+CMakeDeps
+CMakeToolchain
