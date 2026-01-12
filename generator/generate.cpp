@@ -21,6 +21,7 @@
 #include <random>
 #include <filesystem>
 #include <memory>
+#include <fstream>
 
 // Apache Arrow & Parquet Headers
 #include <arrow/api.h>
@@ -106,19 +107,68 @@ class GeoService {
 private:
     map<int, pair<double, double>> location_map;
 
+    static string trim(const string& value) {
+        size_t start = value.find_first_not_of(" \t\r\n");
+        if (start == string::npos) return "";
+        size_t end = value.find_last_not_of(" \t\r\n");
+        return value.substr(start, end - start + 1);
+    }
+
+    static string strip_quotes(const string& value) {
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            return value.substr(1, value.size() - 2);
+        }
+        return value;
+    }
+
+    bool load_from_csv(const string& path) {
+        ifstream file(path);
+        if (!file.is_open()) return false;
+
+        string line;
+        bool first = true;
+        while (getline(file, line)) {
+            if (line.empty()) continue;
+            if (first) {
+                first = false;
+                if (line.find("LocationID") != string::npos) continue;
+            }
+
+            stringstream ss(line);
+            string token;
+            vector<string> fields;
+            while (getline(ss, token, ',')) {
+                fields.push_back(strip_quotes(trim(token)));
+            }
+            if (fields.size() < 3) continue;
+
+            try {
+                int location_id = stoi(fields[0]);
+                double lon = stod(fields[1]);
+                double lat = stod(fields[2]);
+                location_map[location_id] = {lat, lon};
+            } catch (...) {
+                continue;
+            }
+        }
+
+        return !location_map.empty();
+    }
+
 public:
-    GeoService() {
-        // MOCK DATA: 실제 환경에서는 'taxi_zone_lookup.csv'를 로드해야 함
-        location_map[142] = {40.7711, -73.9841}; // Lincoln Square East
-        location_map[230] = {40.7629, -73.9860}; // Times Sq
-        location_map[100] = {40.7505, -73.9934}; // Garment District
-        location_map[161] = {40.7559, -73.9864}; // Midtown Center
-        // Default fallback for unknown IDs
+    explicit GeoService(const string& csv_path = "../data/taxi_zones/taxi_zone_median_coords.csv") {
+        if (!load_from_csv(csv_path)) {
+            location_map[142] = {40.7711, -73.9841};
+            location_map[230] = {40.7629, -73.9860};
+            location_map[100] = {40.7505, -73.9934};
+            location_map[161] = {40.7559, -73.9864};
+        }
     }
 
     pair<double, double> get_coords(int location_id) {
-        if (location_map.count(location_id)) return location_map[location_id];
-        return {40.7580, -73.9855}; // Default: NYC Center
+        auto it = location_map.find(location_id);
+        if (it != location_map.end()) return it->second;
+        return {40.7580, -73.9855};
     }
 
     // Linear Interpolation
@@ -443,6 +493,10 @@ private:
             data.tpep_dropoff_datetime = do_times[i];
             data.PULocationID = (i < pu_locs.size()) ? pu_locs[i] : 0;
             data.DOLocationID = (i < do_locs.size()) ? do_locs[i] : 0;
+            if (data.PULocationID == 264 || data.PULocationID == 265 ||
+                data.DOLocationID == 264 || data.DOLocationID == 265) {
+                continue;
+            }
             data.VendorID = (i < vendors.size()) ? vendors[i] : 0;
             data.RatecodeID = (i < ratecodes.size()) ? ratecodes[i] : 0;
             data.payment_type = (i < payment_types.size()) ? payment_types[i] : 0;

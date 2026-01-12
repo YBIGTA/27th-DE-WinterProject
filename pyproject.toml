@@ -9,5 +9,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "pandas>=2.3.3",
     "pyarrow>=22.0.0",
+    "pyproj>=3.7.2",
+    "pyshp>=3.0.3",
     "tqdm>=4.67.1",
 ]
