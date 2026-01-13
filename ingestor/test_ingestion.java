@@ -8,7 +8,6 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -18,43 +17,47 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class test_ingestion {
     private static final class Stats {
-        private final ConcurrentHashMap<String, AtomicLong> counts = new ConcurrentHashMap<>();
         private final AtomicLong total = new AtomicLong();
         private final AtomicBoolean printed = new AtomicBoolean(false);
+        private final java.util.Set<String> tripIds = ConcurrentHashMap.newKeySet();
+        private final java.util.Set<String> pickupTripIds = ConcurrentHashMap.newKeySet();
+        private final java.util.Set<String> transitTripIds = ConcurrentHashMap.newKeySet();
+        private final java.util.Set<String> dropoffTripIds = ConcurrentHashMap.newKeySet();
 
         void record(String payload) {
             total.incrementAndGet();
-            counts.computeIfAbsent(payload, key -> new AtomicLong()).incrementAndGet();
+            String tripId = extractJsonString(payload, "trip_id");
+            if (tripId == null || tripId.isEmpty()) return;
+            tripIds.add(tripId);
+
+            String event = extractJsonString(payload, "event");
+            if (event == null) return;
+            switch (event) {
+                case "PICKUP":
+                    pickupTripIds.add(tripId);
+                    break;
+                case "IN_TRANSIT":
+                    transitTripIds.add(tripId);
+                    break;
+                case "DROPOFF":
+                    dropoffTripIds.add(tripId);
+                    break;
+                default:
+                    break;
+            }
         }
 
         void printSummary() {
             if (!printed.compareAndSet(false, true)) return;
 
             long totalEvents = total.get();
-            long uniqueEvents = 0;
-            long repeatedPayloads = 0;
-            long repeatedEvents = 0;
-
-            for (Map.Entry<String, AtomicLong> entry : counts.entrySet()) {
-                long count = entry.getValue().get();
-                if (count == 1) {
-                    uniqueEvents++;
-                } else if (count > 1) {
-                    repeatedPayloads++;
-                    repeatedEvents += count;
-                }
-            }
-
-            long uniquePayloads = counts.size();
-            long duplicateOccurrences = repeatedEvents - repeatedPayloads;
 
             System.out.println("=== Ingestion Summary ===");
             System.out.println("Total events processed: " + totalEvents);
-            System.out.println("Unique payloads: " + uniquePayloads);
-            System.out.println("Unique events (count==1): " + uniqueEvents);
-            System.out.println("Repeated payloads (distinct): " + repeatedPayloads);
-            System.out.println("Repeated events (total): " + repeatedEvents);
-            System.out.println("Duplicate occurrences (beyond first): " + duplicateOccurrences);
+            System.out.println("Unique trip IDs: " + tripIds.size());
+            System.out.println("Trip IDs with PICKUP: " + pickupTripIds.size());
+            System.out.println("Trip IDs with IN_TRANSIT: " + transitTripIds.size());
+            System.out.println("Trip IDs with DROPOFF: " + dropoffTripIds.size());
         }
     }
 
@@ -116,6 +119,20 @@ public class test_ingestion {
 
     private static void handleNotFound(HttpExchange exchange) throws IOException {
         writeResponse(exchange, 404, "Not Found\n");
+    }
+
+    private static String extractJsonString(String payload, String key) {
+        if (payload == null || key == null) return null;
+        String needle = "\"" + key + "\"";
+        int keyIndex = payload.indexOf(needle);
+        if (keyIndex < 0) return null;
+        int colon = payload.indexOf(':', keyIndex + needle.length());
+        if (colon < 0) return null;
+        int quoteStart = payload.indexOf('"', colon + 1);
+        if (quoteStart < 0) return null;
+        int quoteEnd = payload.indexOf('"', quoteStart + 1);
+        if (quoteEnd < 0) return null;
+        return payload.substring(quoteStart + 1, quoteEnd);
     }
 
     private static String readBody(InputStream in) throws IOException {

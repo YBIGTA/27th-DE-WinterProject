@@ -8,5 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+
+# data
 /data/taxi_data
 /data/taxi_data_preprocessed
+/data/taxi_data_preprocessed_ex1
+
+# generator
+/generator/build
+/generator/CMakeUserPresets.json
+
+# ingestor
+/ingestor/test_ingestion.class
+/ingestor/test_ingestion$Stats.class

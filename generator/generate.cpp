@@ -1,10 +1,11 @@
 /**
- * Uber-Style Traffic Simulator
- * * Features:
- * 1. Reads Parquet files from a directory structure using Apache Arrow.
- * 2. Generates unique Trip IDs.
- * 3. Simulates 3 trip states: PICKUP -> IN_TRANSIT (GPS Interpolated) -> DROPOFF.
- * 4. Replays events based on historical timestamps with n-speed playback control.
+ * Uber-Style Traffic Simulator (FIXED VERSION)
+ * 
+ * Fixes applied:
+ * 1. Fixed busy-wait spin loop in schedule_events
+ * 2. Added proper sleep/yield for short waits
+ * 3. Added debug logging for timing verification
+ * 4. Improved timestamp handling
  */
 
 #include <iostream>
@@ -51,9 +52,8 @@ namespace fs = std::filesystem;
 // 1. Data Structures & Enums
 // ==========================================
 
-// Parquet Row Data Wrapper
 struct RawTripData {
-    string trip_id; // Generated UUID
+    string trip_id;
     
     int64_t VendorID;
     int64_t passenger_count;
@@ -75,24 +75,21 @@ struct RawTripData {
     double trip_distance;
     double Airport_fee;
     
-    int64_t tpep_pickup_datetime;  // Microseconds
-    int64_t tpep_dropoff_datetime; // Microseconds
+    int64_t tpep_pickup_datetime;  // Microseconds since epoch
+    int64_t tpep_dropoff_datetime; // Microseconds since epoch
 };
 
 enum class EventType { PICKUP, IN_TRANSIT, DROPOFF };
 
 struct SimulationEvent {
     EventType type;
-    int64_t event_time_us; // Simulation Trigger Time
+    int64_t event_time_us; // Simulation time in microseconds
     
-    // Pointer to raw data to save memory
     const RawTripData* raw_data;
     
-    // For IN_TRANSIT
     double current_lat;
     double current_lon;
 
-    // Priority Queue: Smallest time pops first
     bool operator>(const SimulationEvent& other) const {
         return event_time_us > other.event_time_us;
     }
@@ -110,6 +107,7 @@ struct SimulationConfig {
     DateRange range{2020, 1, 2024, 4};
     string data_path = "../data/taxi_data_preprocessed";
     string ingestion_url = "http://localhost:8080/ingest";
+    bool debug_timing = false;  // NEW: Enable timing debug logs
 };
 
 static string trim_copy(const string& value) {
@@ -172,20 +170,15 @@ static SimulationConfig load_config(const string& path) {
         }
 
         if (key == "playback_speed") {
-            try {
-                config.playback_speed = stod(value);
-            } catch (...) {
-            }
+            try { config.playback_speed = stod(value); } catch (...) {}
         } else if (key == "start" || key == "start_date") {
-            int year = 0;
-            int month = 0;
+            int year = 0, month = 0;
             if (parse_year_month_value(value, year, month)) {
                 config.range.start_year = year;
                 config.range.start_month = month;
             }
         } else if (key == "end" || key == "end_date") {
-            int year = 0;
-            int month = 0;
+            int year = 0, month = 0;
             if (parse_year_month_value(value, year, month)) {
                 config.range.end_year = year;
                 config.range.end_month = month;
@@ -194,6 +187,8 @@ static SimulationConfig load_config(const string& path) {
             if (!value.empty()) config.data_path = value;
         } else if (key == "ingestion_url" || key == "ingest_url") {
             if (!value.empty()) config.ingestion_url = value;
+        } else if (key == "debug_timing") {
+            config.debug_timing = (value == "true" || value == "1");
         }
     }
 
@@ -310,8 +305,7 @@ static bool http_post_json(const HttpEndpoint& endpoint, const string& payload) 
     bool ok = send_all(sock, request.data(), request.size());
     if (ok) {
         char buffer[512];
-        while (recv(sock, buffer, sizeof(buffer), 0) > 0) {
-        }
+        while (recv(sock, buffer, sizeof(buffer), 0) > 0) {}
     }
     close(sock);
     return ok;
@@ -403,21 +397,32 @@ public:
     pair<double, double> get_coords(int location_id) {
         auto it = location_map.find(location_id);
         if (it != location_map.end()) return it->second;
-        return {40.7580, -73.9855};
+        return {40.7580, -73.9855};  // Default NYC coords
     }
 
-    // Linear Interpolation
+    /**
+     * Linear interpolation between pickup and dropoff locations.
+     * 
+     * @param pu_id        Pickup location ID
+     * @param do_id        Dropoff location ID  
+     * @param start_ts     Pickup time (microseconds)
+     * @param end_ts       Dropoff time (microseconds)
+     * @param current_ts   Current simulation time (microseconds)
+     * @return {latitude, longitude} interpolated position
+     */
     pair<double, double> interpolate(int pu_id, int do_id, 
                                      int64_t start_ts, int64_t end_ts, int64_t current_ts) {
         auto start_pos = get_coords(pu_id);
         auto end_pos = get_coords(do_id);
 
-        double total_duration = (double)(end_ts - start_ts);
+        double total_duration = static_cast<double>(end_ts - start_ts);
         if (total_duration <= 0) return start_pos;
 
-        double elapsed = (double)(current_ts - start_ts);
+        double elapsed = static_cast<double>(current_ts - start_ts);
         double ratio = elapsed / total_duration;
 
+        // Clamp ratio to [0, 1]
+        if (ratio <= 0.0) return start_pos;
         if (ratio >= 1.0) return end_pos;
 
         double lat = start_pos.first + (end_pos.first - start_pos.first) * ratio;
@@ -427,28 +432,34 @@ public:
 };
 
 // ==========================================
-// 3. Core Engine (Simulator)
+// 3. Core Engine (Simulator) - FIXED
 // ==========================================
 
 class UberSimulator {
 private:
     priority_queue<SimulationEvent, vector<SimulationEvent>, greater<SimulationEvent>> event_queue;
-    deque<RawTripData> dataset; // In-memory storage (stable addresses)
+    deque<RawTripData> dataset;
     GeoService geo_service;
     double playback_speed;
     string ingestion_url;
     HttpEndpoint ingestion_endpoint;
     bool ingestion_endpoint_ok = false;
+    bool debug_timing = false;
     mutex log_mu;
     mutex ingest_mu;
     
-    // Config
     const int64_t TRANSIT_UPDATE_INTERVAL_US = 30 * 1000000; // 30 seconds
     const size_t PAYLOAD_QUEUE_CAPACITY = 4096;
+    
+    // Statistics
+    atomic<size_t> events_sent{0};
+    atomic<size_t> pickup_count{0};
+    atomic<size_t> transit_count{0};
+    atomic<size_t> dropoff_count{0};
 
 public:
-    UberSimulator(double speed, string url) : playback_speed(speed), ingestion_url(std::move(url)) {
-        // deque keeps element addresses stable when it grows.
+    UberSimulator(double speed, string url, bool debug = false) 
+        : playback_speed(speed), ingestion_url(std::move(url)), debug_timing(debug) {
         ingestion_endpoint_ok = parse_http_url(ingestion_url, ingestion_endpoint);
         if (!ingestion_endpoint_ok) {
             lock_guard<mutex> lock(log_mu);
@@ -456,7 +467,6 @@ public:
         }
     }
 
-    // Add data to engine and generate sub-events
     void ingest_trip(RawTripData data) {
         vector<RawTripData> batch;
         batch.push_back(std::move(data));
@@ -472,20 +482,22 @@ public:
             const RawTripData* p_data = &dataset.back();
             const auto& stored = *p_data;
 
-            // 1. PICKUP
+            // 1. PICKUP event
             event_queue.push({EventType::PICKUP, stored.tpep_pickup_datetime, p_data, 0.0, 0.0});
 
-            // 2. IN_TRANSIT (Loop)
+            // 2. IN_TRANSIT events (every 30 seconds)
             int64_t current_time = stored.tpep_pickup_datetime + TRANSIT_UPDATE_INTERVAL_US;
             while (current_time < stored.tpep_dropoff_datetime) {
-                auto coords = geo_service.interpolate(stored.PULocationID, stored.DOLocationID,
-                                                      stored.tpep_pickup_datetime, stored.tpep_dropoff_datetime,
-                                                      current_time);
+                auto coords = geo_service.interpolate(
+                    stored.PULocationID, stored.DOLocationID,
+                    stored.tpep_pickup_datetime, stored.tpep_dropoff_datetime,
+                    current_time
+                );
                 event_queue.push({EventType::IN_TRANSIT, current_time, p_data, coords.first, coords.second});
                 current_time += TRANSIT_UPDATE_INTERVAL_US;
             }
 
-            // 3. DROPOFF
+            // 3. DROPOFF event
             event_queue.push({EventType::DROPOFF, stored.tpep_dropoff_datetime, p_data, 0.0, 0.0});
         }
     }
@@ -497,8 +509,11 @@ public:
         }
 
         cout << ">>> Starting Simulation (Speed: " << playback_speed << "x) <<<" << endl;
+        cout << ">>> Total events queued: " << event_queue.size() << endl;
+        
         int64_t sim_start_ts = event_queue.top().event_time_us;
         cout << ">>> First Event Time (Unix us): " << sim_start_ts << endl;
+        cout << ">>> First Event Time (ISO): " << format_timestamp(sim_start_ts) << endl;
 
         BoundedQueue payload_queue(PAYLOAD_QUEUE_CAPACITY);
 
@@ -517,43 +532,104 @@ public:
             });
         }
 
-        thread scheduler(&UberSimulator::schedule_events, this, std::ref(payload_queue), sim_start_ts);
+        thread scheduler(&UberSimulator::schedule_events_fixed, this, std::ref(payload_queue), sim_start_ts);
         scheduler.join();
+        
         for (auto& t : senders) {
             t.join();
         }
+        
         cout << ">>> Simulation Completed <<<" << endl;
+        cout << ">>> Events sent: " << events_sent.load() << endl;
+        cout << ">>> PICKUP: " << pickup_count.load() 
+             << ", IN_TRANSIT: " << transit_count.load() 
+             << ", DROPOFF: " << dropoff_count.load() << endl;
     }
 
 private:
-    void schedule_events(BoundedQueue& payload_queue, int64_t sim_start_ts) {
-        auto wall_start = steady_clock::now();
+    static string format_timestamp(int64_t us) {
+        time_t seconds = static_cast<time_t>(us / 1000000LL);
+        tm tm_value{};
+#if defined(__unix__) || defined(__APPLE__)
+        gmtime_r(&seconds, &tm_value);
+#else
+        tm* tm_ptr = gmtime(&seconds);
+        if (tm_ptr) tm_value = *tm_ptr;
+#endif
+        char buffer[32];
+        strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm_value);
+        return string(buffer);
+    }
 
+    /**
+     * FIXED schedule_events - properly handles timing without busy-wait
+     */
+    void schedule_events_fixed(BoundedQueue& payload_queue, int64_t sim_start_ts) {
+        auto wall_start = steady_clock::now();
+        size_t processed = 0;
+        
         while (!event_queue.empty()) {
             SimulationEvent ev = event_queue.top();
 
             // Calculate current simulation time
             auto now = steady_clock::now();
             double real_elapsed_sec = duration<double>(now - wall_start).count();
-            int64_t sim_elapsed_us = (int64_t)(real_elapsed_sec * playback_speed * 1000000.0);
+            int64_t sim_elapsed_us = static_cast<int64_t>(real_elapsed_sec * playback_speed * 1000000.0);
             int64_t current_sim_ts = sim_start_ts + sim_elapsed_us;
 
+            // Check if it's time to fire this event
             if (current_sim_ts >= ev.event_time_us) {
+                // Event is ready - process it
                 string payload = build_payload(ev);
                 if (!payload_queue.push(std::move(payload))) {
-                    break;
+                    break;  // Queue closed
                 }
                 event_queue.pop();
+                events_sent.fetch_add(1, memory_order_relaxed);
+                
+                // Update stats
+                switch (ev.type) {
+                    case EventType::PICKUP: pickup_count.fetch_add(1); break;
+                    case EventType::IN_TRANSIT: transit_count.fetch_add(1); break;
+                    case EventType::DROPOFF: dropoff_count.fetch_add(1); break;
+                }
+                
+                processed++;
+                
+                // Debug logging every 10000 events
+                if (debug_timing && processed % 10000 == 0) {
+                    lock_guard<mutex> lock(log_mu);
+                    cout << "[DEBUG] Processed " << processed 
+                         << " events, sim_time=" << format_timestamp(current_sim_ts)
+                         << ", event_time=" << format_timestamp(ev.event_time_us) << endl;
+                }
             } else {
-                // Sleep only if wait is significant (>1ms) to avoid CPU spin
-                double wait_sec = (double)(ev.event_time_us - current_sim_ts) / 1000000.0 / playback_speed;
-                if (wait_sec > 0.001) {
-                    this_thread::sleep_for(duration<double>(wait_sec));
+                // Event not ready yet - calculate wait time
+                int64_t wait_us = ev.event_time_us - current_sim_ts;
+                double wait_real_us = static_cast<double>(wait_us) / playback_speed;
+                
+                // FIX: Always sleep, but use different strategies based on wait time
+                if (wait_real_us > 10000.0) {
+                    // Long wait (>10ms): sleep for most of it, wake up early to avoid oversleep
+                    auto sleep_duration = microseconds(static_cast<int64_t>(wait_real_us * 0.9));
+                    this_thread::sleep_for(sleep_duration);
+                } else if (wait_real_us > 100.0) {
+                    // Medium wait (0.1ms - 10ms): sleep for the exact duration
+                    auto sleep_duration = microseconds(static_cast<int64_t>(wait_real_us));
+                    this_thread::sleep_for(sleep_duration);
+                } else {
+                    // Short wait (<0.1ms): yield to avoid busy-wait, then recheck
+                    this_thread::yield();
                 }
             }
         }
 
         payload_queue.close();
+        
+        if (debug_timing) {
+            lock_guard<mutex> lock(log_mu);
+            cout << "[DEBUG] Scheduler finished. Total processed: " << processed << endl;
+        }
     }
 
     string build_payload(const SimulationEvent& ev) {
@@ -562,28 +638,34 @@ private:
 
         json << "{";
         if (ev.type == EventType::PICKUP) {
+            auto coords = geo_service.get_coords(d->PULocationID);
             json << "\"event\": \"PICKUP\", "
                  << "\"trip_id\": \"" << d->trip_id << "\", "
                  << "\"pu_loc\": " << d->PULocationID << ", "
+                 << "\"lat\": " << fixed << setprecision(6) << coords.first << ", "
+                 << "\"lon\": " << coords.second << ", "
                  << "\"vendor_id\": " << d->VendorID << ", "
                  << "\"passenger\": " << d->passenger_count << ", "
-                 << "\"ts\": " << d->tpep_pickup_datetime;
+                 << "\"ts\": \"" << format_timestamp(d->tpep_pickup_datetime) << "\"";
         } 
         else if (ev.type == EventType::IN_TRANSIT) {
             json << "\"event\": \"IN_TRANSIT\", "
                  << "\"trip_id\": \"" << d->trip_id << "\", "
                  << "\"lat\": " << fixed << setprecision(6) << ev.current_lat << ", "
                  << "\"lon\": " << ev.current_lon << ", "
-                 << "\"ts\": " << ev.event_time_us;
+                 << "\"ts\": \"" << format_timestamp(ev.event_time_us) << "\"";
         } 
         else { // DROPOFF
+            auto coords = geo_service.get_coords(d->DOLocationID);
             json << "\"event\": \"DROPOFF\", "
                  << "\"trip_id\": \"" << d->trip_id << "\", "
                  << "\"do_loc\": " << d->DOLocationID << ", "
+                 << "\"lat\": " << fixed << setprecision(6) << coords.first << ", "
+                 << "\"lon\": " << coords.second << ", "
                  << "\"fare\": " << d->fare_amount << ", "
                  << "\"total\": " << d->total_amount << ", "
                  << "\"dist\": " << d->trip_distance << ", "
-                 << "\"ts\": " << d->tpep_dropoff_datetime;
+                 << "\"ts\": \"" << format_timestamp(d->tpep_dropoff_datetime) << "\"";
         }
         json << "}";
 
@@ -689,8 +771,7 @@ private:
     }
 
     static bool is_in_date_range(const string& name, const DateRange& range) {
-        int year = 0;
-        int month = 0;
+        int year = 0, month = 0;
         if (!extract_year_month(name, year, month)) return false;
         int value = year * 12 + month;
         int start = range.start_year * 12 + range.start_month;
@@ -713,6 +794,13 @@ private:
     static int64_t normalize_epoch_us(int64_t value) {
         if (value == 0) return 0;
         int64_t abs_value = llabs(value);
+        // Already in reasonable microseconds range (2010-2030)
+        const int64_t min_us = 1262304000000000LL; // 2010-01-01
+        const int64_t max_us = 1893456000000000LL; // 2030-01-01
+        if (abs_value >= min_us && abs_value <= max_us) {
+            return value;  // Already microseconds
+        }
+        // Try to detect and convert
         if (abs_value < 100000000000LL) {
             return value * 1000000LL; // seconds -> us
         }
@@ -729,8 +817,7 @@ private:
         for (int64_t value : values) {
             if (value != 0) return value;
         }
-        if (values.empty()) return 0;
-        return values.front();
+        return values.empty() ? 0 : values.front();
     }
 
     static bool is_reasonable_epoch_us(int64_t value) {
@@ -775,7 +862,7 @@ private:
              << " normalized_us=" << normalized
              << " iso=" << iso;
         if (!is_reasonable_epoch_us(normalized)) {
-            cout << " range=out_of_range";
+            cout << " range=OUT_OF_RANGE";
         }
         cout << endl;
     }
@@ -897,7 +984,6 @@ private:
         }
         cout << "[Loader] Table rows: " << table->num_rows() << endl;
 
-        // Column Extraction Helpers
         auto get_int64 = [&](string name) { return extract_int64(table, name); };
         auto get_double = [&](string name) { return extract_double(table, name); };
         auto get_string = [&](string name) { return extract_string(table, name); };
@@ -936,23 +1022,16 @@ private:
 
         size_t row_count = min(pu_times.size(), do_times.size());
         size_t ingested = 0;
-        size_t skipped_airport = 0;
-        size_t skipped_time = 0;
         vector<RawTripData> batch;
         batch.reserve(row_count);
 
-        // Row-wise Injection
         for (size_t i = 0; i < row_count; ++i) {
             RawTripData data;
             data.tpep_pickup_datetime = normalize_epoch_us(pu_times[i]);
             data.tpep_dropoff_datetime = normalize_epoch_us(do_times[i]);
             data.PULocationID = (i < pu_locs.size()) ? pu_locs[i] : 0;
             data.DOLocationID = (i < do_locs.size()) ? do_locs[i] : 0;
-            if (data.PULocationID == 264 || data.PULocationID == 265 ||
-                data.DOLocationID == 264 || data.DOLocationID == 265) {
-                skipped_airport++;
-                continue;
-            }
+
             data.VendorID = (i < vendors.size()) ? vendors[i] : 0;
             data.RatecodeID = (i < ratecodes.size()) ? ratecodes[i] : 0;
             data.payment_type = (i < payment_types.size()) ? payment_types[i] : 0;
@@ -970,19 +1049,12 @@ private:
             data.trip_distance = (i < dists.size()) ? dists[i] : 0.0;
             data.Airport_fee = (i < airport_fees.size()) ? airport_fees[i] : 0.0;
 
-            if (data.tpep_dropoff_datetime < data.tpep_pickup_datetime) {
-                skipped_time++;
-                continue;
-            }
-
             batch.push_back(std::move(data));
             ingested++;
         }
         sim.ingest_trips(std::move(batch));
         cout << "[Loader] " << path << " rows=" << row_count
-             << " ingested=" << ingested
-             << " skipped_airport=" << skipped_airport
-             << " skipped_time=" << skipped_time << endl;
+             << " ingested=" << ingested << endl;
     }
 
     static vector<int64_t> extract_int64(shared_ptr<arrow::Table> table, string col_name) {
@@ -1036,14 +1108,12 @@ int main(int argc, char** argv) {
     }
     SimulationConfig config = load_config(config_path);
 
-    // Initialize Simulator
-    UberSimulator sim(config.playback_speed, config.ingestion_url);
+    UberSimulator sim(config.playback_speed, config.ingestion_url, config.debug_timing);
 
-    // Load Data
     cout << "=== Uber Data Generator Initializing ===" << endl;
+    cout << "=== Playback Speed: " << config.playback_speed << "x ===" << endl;
     ParquetLoader::load_from_directory(config.data_path, sim, config.range);
 
-    // Run
     sim.run();
 
     return 0;
