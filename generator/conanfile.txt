@@ -3,6 +3,7 @@ arrow/14.0.1
 
 [options]
 arrow/*:shared=True
+arrow/*:with_zstd=True
 
 [generators]
 CMakeDeps

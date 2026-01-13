@@ -27,7 +27,9 @@
 #include <cstdlib>
 #include <deque>
 #include <functional>
+#include <ctime>
 #include <mutex>
+#include <atomic>
 #include <utility>
 
 // Apache Arrow & Parquet Headers
@@ -328,16 +330,11 @@ static bool http_post_json(const HttpEndpoint&, const string&) {
 class TripIdGenerator {
 public:
     static string generate() {
-        static random_device rd;
-        static mt19937 gen(rd());
-        static uniform_int_distribution<> dis(0, 15);
-        static const char* digits = "0123456789abcdef";
-        string uuid(36, ' ');
-        for (int i = 0; i < 36; i++) {
-            if (i == 8 || i == 13 || i == 18 || i == 23) uuid[i] = '-';
-            else uuid[i] = digits[dis(gen)];
-        }
-        return uuid;
+        static const int64_t start_us = duration_cast<microseconds>(
+            system_clock::now().time_since_epoch()).count();
+        static atomic<uint64_t> counter{0};
+        uint64_t id = counter.fetch_add(1, memory_order_relaxed);
+        return to_string(start_us) + "-" + to_string(id);
     }
 };
 
@@ -436,13 +433,14 @@ public:
 class UberSimulator {
 private:
     priority_queue<SimulationEvent, vector<SimulationEvent>, greater<SimulationEvent>> event_queue;
-    vector<RawTripData> dataset; // In-memory storage
+    deque<RawTripData> dataset; // In-memory storage (stable addresses)
     GeoService geo_service;
     double playback_speed;
     string ingestion_url;
     HttpEndpoint ingestion_endpoint;
     bool ingestion_endpoint_ok = false;
     mutex log_mu;
+    mutex ingest_mu;
     
     // Config
     const int64_t TRANSIT_UPDATE_INTERVAL_US = 30 * 1000000; // 30 seconds
@@ -450,8 +448,7 @@ private:
 
 public:
     UberSimulator(double speed, string url) : playback_speed(speed), ingestion_url(std::move(url)) {
-        // Reserve memory to prevent reallocation invalidating pointers
-        dataset.reserve(1000000); 
+        // deque keeps element addresses stable when it grows.
         ingestion_endpoint_ok = parse_http_url(ingestion_url, ingestion_endpoint);
         if (!ingestion_endpoint_ok) {
             lock_guard<mutex> lock(log_mu);
@@ -461,27 +458,36 @@ public:
 
     // Add data to engine and generate sub-events
     void ingest_trip(RawTripData data) {
-        data.trip_id = TripIdGenerator::generate();
-        
-        // Store in vector first
-        dataset.push_back(data);
-        const RawTripData* p_data = &dataset.back();
+        vector<RawTripData> batch;
+        batch.push_back(std::move(data));
+        ingest_trips(std::move(batch));
+    }
 
-        // 1. PICKUP
-        event_queue.push({EventType::PICKUP, data.tpep_pickup_datetime, p_data, 0.0, 0.0});
+    void ingest_trips(vector<RawTripData>&& batch) {
+        if (batch.empty()) return;
+        lock_guard<mutex> lock(ingest_mu);
+        for (auto& data : batch) {
+            data.trip_id = TripIdGenerator::generate();
+            dataset.push_back(std::move(data));
+            const RawTripData* p_data = &dataset.back();
+            const auto& stored = *p_data;
 
-        // 2. IN_TRANSIT (Loop)
-        int64_t current_time = data.tpep_pickup_datetime + TRANSIT_UPDATE_INTERVAL_US;
-        while (current_time < data.tpep_dropoff_datetime) {
-            auto coords = geo_service.interpolate(data.PULocationID, data.DOLocationID,
-                                                  data.tpep_pickup_datetime, data.tpep_dropoff_datetime,
-                                                  current_time);
-            event_queue.push({EventType::IN_TRANSIT, current_time, p_data, coords.first, coords.second});
-            current_time += TRANSIT_UPDATE_INTERVAL_US;
+            // 1. PICKUP
+            event_queue.push({EventType::PICKUP, stored.tpep_pickup_datetime, p_data, 0.0, 0.0});
+
+            // 2. IN_TRANSIT (Loop)
+            int64_t current_time = stored.tpep_pickup_datetime + TRANSIT_UPDATE_INTERVAL_US;
+            while (current_time < stored.tpep_dropoff_datetime) {
+                auto coords = geo_service.interpolate(stored.PULocationID, stored.DOLocationID,
+                                                      stored.tpep_pickup_datetime, stored.tpep_dropoff_datetime,
+                                                      current_time);
+                event_queue.push({EventType::IN_TRANSIT, current_time, p_data, coords.first, coords.second});
+                current_time += TRANSIT_UPDATE_INTERVAL_US;
+            }
+
+            // 3. DROPOFF
+            event_queue.push({EventType::DROPOFF, stored.tpep_dropoff_datetime, p_data, 0.0, 0.0});
         }
-
-        // 3. DROPOFF
-        event_queue.push({EventType::DROPOFF, data.tpep_dropoff_datetime, p_data, 0.0, 0.0});
     }
 
     void run() {
@@ -609,15 +615,54 @@ public:
             return;
         }
 
+        vector<fs::path> files;
         for (const auto& entry : fs::recursive_directory_iterator(root_path)) {
-            if (entry.is_regular_file() && entry.path().extension() == ".parquet") {
-                if (!is_in_date_range(entry.path().filename().string(), range)) {
-                    continue;
-                }
-                cout << "[Loader] Reading: " << entry.path().filename() << "... ";
-                load_file(entry.path().string(), sim);
-                cout << "Done." << endl;
+            if (!entry.is_regular_file() || entry.path().extension() != ".parquet") {
+                continue;
             }
+            if (!is_in_date_range(entry.path().filename().string(), range)) {
+                continue;
+            }
+            files.push_back(entry.path());
+        }
+
+        if (files.empty()) {
+            cout << "[Loader] No parquet files found in range." << endl;
+            return;
+        }
+
+        sort(files.begin(), files.end());
+
+        size_t worker_count = thread::hardware_concurrency();
+        if (worker_count == 0) worker_count = 1;
+        worker_count *= 2;
+
+        atomic<size_t> next_index{0};
+        mutex log_mu;
+        vector<thread> workers;
+        workers.reserve(worker_count);
+
+        for (size_t i = 0; i < worker_count; ++i) {
+            workers.emplace_back([&]() {
+                while (true) {
+                    size_t idx = next_index.fetch_add(1);
+                    if (idx >= files.size()) break;
+                    const auto& path = files[idx];
+                    {
+                        lock_guard<mutex> lock(log_mu);
+                        cout << "[Loader] Reading: " << path.filename() << "... ";
+                    }
+                    load_file(path.string(), sim);
+                    {
+                        lock_guard<mutex> lock(log_mu);
+                        cout << "Done." << endl;
+                    }
+                }
+            });
+        }
+
+        for (auto& t : workers) {
+            t.join();
         }
     }
 
@@ -663,6 +708,76 @@ private:
             case arrow::TimeUnit::NANO: return value / 1000LL;
         }
         return value;
+    }
+
+    static int64_t normalize_epoch_us(int64_t value) {
+        if (value == 0) return 0;
+        int64_t abs_value = llabs(value);
+        if (abs_value < 100000000000LL) {
+            return value * 1000000LL; // seconds -> us
+        }
+        if (abs_value < 100000000000000LL) {
+            return value * 1000LL; // millis -> us
+        }
+        if (abs_value < 100000000000000000LL) {
+            return value; // micros
+        }
+        return value / 1000LL; // nanos -> us
+    }
+
+    static int64_t first_nonzero(const vector<int64_t>& values) {
+        for (int64_t value : values) {
+            if (value != 0) return value;
+        }
+        if (values.empty()) return 0;
+        return values.front();
+    }
+
+    static bool is_reasonable_epoch_us(int64_t value) {
+        const int64_t min = 1262304000000000LL; // 2010-01-01
+        const int64_t max = 1893456000000000LL; // 2030-01-01
+        return value >= min && value <= max;
+    }
+
+    static string format_epoch_us(int64_t value) {
+        if (value <= 0) return "n/a";
+        time_t seconds = static_cast<time_t>(value / 1000000LL);
+        tm tm_value{};
+#if defined(__unix__) || defined(__APPLE__)
+        if (gmtime_r(&seconds, &tm_value) == nullptr) return "n/a";
+#else
+        tm* tm_ptr = gmtime(&seconds);
+        if (!tm_ptr) return "n/a";
+        tm_value = *tm_ptr;
+#endif
+        char buffer[32];
+        if (strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm_value) == 0) {
+            return "n/a";
+        }
+        return string(buffer);
+    }
+
+    static void log_timestamp_sample(const string& path,
+                                     const string& label,
+                                     const shared_ptr<arrow::ChunkedArray>& column,
+                                     const vector<int64_t>& values) {
+        if (values.empty()) return;
+        static mutex log_mu;
+        int64_t raw = first_nonzero(values);
+        int64_t normalized = normalize_epoch_us(raw);
+        string type = column ? column->type()->ToString() : "missing";
+        string iso = format_epoch_us(normalized);
+        lock_guard<mutex> lock(log_mu);
+        cout << "[Loader] Timestamp sample (" << label << ") file="
+             << fs::path(path).filename()
+             << " type=" << type
+             << " raw=" << raw
+             << " normalized_us=" << normalized
+             << " iso=" << iso;
+        if (!is_reasonable_epoch_us(normalized)) {
+            cout << " range=out_of_range";
+        }
+        cout << endl;
     }
 
     static int64_t get_int64_value(const shared_ptr<arrow::Array>& arr, int64_t i, int64_t default_val) {
@@ -762,20 +877,33 @@ private:
         arrow::MemoryPool* pool = arrow::default_memory_pool();
 
         auto file_res = arrow::io::ReadableFile::Open(path);
-        if (!file_res.ok()) return;
+        if (!file_res.ok()) {
+            cerr << "[Loader] Failed to open " << path << ": " << file_res.status().ToString() << endl;
+            return;
+        }
         
         std::unique_ptr<parquet::arrow::FileReader> reader;
         st = parquet::arrow::OpenFile(*file_res, pool, &reader);
-        if (!st.ok()) return;
+        if (!st.ok()) {
+            cerr << "[Loader] Failed to open Parquet reader for " << path << ": " << st.ToString() << endl;
+            return;
+        }
 
         std::shared_ptr<arrow::Table> table;
         st = reader->ReadTable(&table);
-        if (!st.ok()) return;
+        if (!st.ok()) {
+            cerr << "[Loader] Failed to read table for " << path << ": " << st.ToString() << endl;
+            return;
+        }
+        cout << "[Loader] Table rows: " << table->num_rows() << endl;
 
         // Column Extraction Helpers
         auto get_int64 = [&](string name) { return extract_int64(table, name); };
         auto get_double = [&](string name) { return extract_double(table, name); };
         auto get_string = [&](string name) { return extract_string(table, name); };
+
+        auto pu_col = table->GetColumnByName("tpep_pickup_datetime");
+        auto do_col = table->GetColumnByName("tpep_dropoff_datetime");
 
         auto pu_times = get_int64("tpep_pickup_datetime");
         auto do_times = get_int64("tpep_dropoff_datetime");
@@ -798,22 +926,31 @@ private:
         auto dists = get_double("trip_distance");
         auto airport_fees = get_double("Airport_fee");
 
+        log_timestamp_sample(path, "pickup", pu_col, pu_times);
+        log_timestamp_sample(path, "dropoff", do_col, do_times);
+
         if (pu_times.empty() || do_times.empty()) {
             cerr << "[Loader] Missing required timestamps in: " << path << endl;
             return;
         }
 
         size_t row_count = min(pu_times.size(), do_times.size());
+        size_t ingested = 0;
+        size_t skipped_airport = 0;
+        size_t skipped_time = 0;
+        vector<RawTripData> batch;
+        batch.reserve(row_count);
 
         // Row-wise Injection
         for (size_t i = 0; i < row_count; ++i) {
             RawTripData data;
-            data.tpep_pickup_datetime = pu_times[i];
-            data.tpep_dropoff_datetime = do_times[i];
+            data.tpep_pickup_datetime = normalize_epoch_us(pu_times[i]);
+            data.tpep_dropoff_datetime = normalize_epoch_us(do_times[i]);
             data.PULocationID = (i < pu_locs.size()) ? pu_locs[i] : 0;
             data.DOLocationID = (i < do_locs.size()) ? do_locs[i] : 0;
             if (data.PULocationID == 264 || data.PULocationID == 265 ||
                 data.DOLocationID == 264 || data.DOLocationID == 265) {
+                skipped_airport++;
                 continue;
             }
             data.VendorID = (i < vendors.size()) ? vendors[i] : 0;
@@ -833,10 +970,19 @@ private:
             data.trip_distance = (i < dists.size()) ? dists[i] : 0.0;
             data.Airport_fee = (i < airport_fees.size()) ? airport_fees[i] : 0.0;
 
-            if (data.tpep_dropoff_datetime < data.tpep_pickup_datetime) continue;
+            if (data.tpep_dropoff_datetime < data.tpep_pickup_datetime) {
+                skipped_time++;
+                continue;
+            }
 
-            sim.ingest_trip(data);
+            batch.push_back(std::move(data));
+            ingested++;
         }
+        sim.ingest_trips(std::move(batch));
+        cout << "[Loader] " << path << " rows=" << row_count
+             << " ingested=" << ingested
+             << " skipped_airport=" << skipped_airport
+             << " skipped_time=" << skipped_time << endl;
     }
 
     static vector<int64_t> extract_int64(shared_ptr<arrow::Table> table, string col_name) {
