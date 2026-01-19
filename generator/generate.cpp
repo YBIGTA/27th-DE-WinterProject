@@ -41,6 +41,7 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -53,7 +54,7 @@ namespace fs = std::filesystem;
 // ==========================================
 
 struct RawTripData {
-    string trip_id;
+    int64_t trip_id;
     
     int64_t VendorID;
     int64_t passenger_count;
@@ -86,9 +87,6 @@ struct SimulationEvent {
     int64_t event_time_us; // Simulation time in microseconds
     
     const RawTripData* raw_data;
-    
-    double current_lat;
-    double current_lon;
 
     bool operator>(const SimulationEvent& other) const {
         return event_time_us > other.event_time_us;
@@ -275,40 +273,201 @@ static bool send_all(int sock, const char* data, size_t len) {
     return true;
 }
 
-static bool http_post_json(const HttpEndpoint& endpoint, const string& payload) {
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    addrinfo* res = nullptr;
-    if (getaddrinfo(endpoint.host.c_str(), endpoint.port.c_str(), &hints, &res) != 0) {
+static bool set_socket_timeouts(int sock) {
+    timeval timeout{};
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0) {
         return false;
     }
-
-    int sock = -1;
-    for (addrinfo* rp = res; rp != nullptr; rp = rp->ai_next) {
-        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (sock == -1) continue;
-        if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) break;
-        close(sock);
-        sock = -1;
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) {
+        return false;
     }
-    freeaddrinfo(res);
-    if (sock == -1) return false;
+    return true;
+}
 
-    string request = "POST " + endpoint.path + " HTTP/1.1\r\n";
-    request += "Host: " + endpoint.host + "\r\n";
-    request += "Content-Type: application/json\r\n";
-    request += "Content-Length: " + to_string(payload.size()) + "\r\n";
-    request += "Connection: close\r\n\r\n";
-    request += payload;
+static bool recv_more(int sock, string& buffer) {
+    char temp[1024];
+    ssize_t received = recv(sock, temp, sizeof(temp), 0);
+    if (received <= 0) return false;
+    buffer.append(temp, static_cast<size_t>(received));
+    return true;
+}
 
-    bool ok = send_all(sock, request.data(), request.size());
-    if (ok) {
-        char buffer[512];
-        while (recv(sock, buffer, sizeof(buffer), 0) > 0) {}
+static bool read_chunked_body(int sock, string& pending) {
+    while (true) {
+        size_t line_end = pending.find("\r\n");
+        while (line_end == string::npos) {
+            if (!recv_more(sock, pending)) return false;
+            line_end = pending.find("\r\n");
+        }
+
+        string line = pending.substr(0, line_end);
+        pending.erase(0, line_end + 2);
+        size_t chunk_size = strtoul(line.c_str(), nullptr, 16);
+        if (chunk_size == 0) {
+            // Consume trailer headers until an empty line.
+            while (true) {
+                line_end = pending.find("\r\n");
+                while (line_end == string::npos) {
+                    if (!recv_more(sock, pending)) return false;
+                    line_end = pending.find("\r\n");
+                }
+                string trailer = pending.substr(0, line_end);
+                pending.erase(0, line_end + 2);
+                if (trailer.empty()) return true;
+            }
+        }
+
+        while (pending.size() < chunk_size + 2) {
+            if (!recv_more(sock, pending)) return false;
+        }
+        pending.erase(0, chunk_size + 2);
     }
-    close(sock);
-    return ok;
+}
+
+static bool read_http_response(int sock) {
+    string buffer;
+    buffer.reserve(2048);
+    size_t header_end = string::npos;
+    while (header_end == string::npos) {
+        if (!recv_more(sock, buffer)) return false;
+        header_end = buffer.find("\r\n\r\n");
+        if (buffer.size() > 65536) return false;
+    }
+
+    string header = buffer.substr(0, header_end);
+    size_t body_offset = header_end + 4;
+    string pending = buffer.substr(body_offset);
+
+    int64_t content_length = -1;
+    bool chunked = false;
+    istringstream header_stream(header);
+    string line;
+    getline(header_stream, line);
+    while (getline(header_stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        string lowered = to_lower_copy(line);
+        if (lowered.rfind("content-length:", 0) == 0) {
+            string value = trim_copy(line.substr(15));
+            try { content_length = stoll(value); } catch (...) {}
+        } else if (lowered.rfind("transfer-encoding:", 0) == 0) {
+            if (lowered.find("chunked") != string::npos) chunked = true;
+        }
+    }
+
+    if (chunked) {
+        return read_chunked_body(sock, pending);
+    }
+
+    if (content_length >= 0) {
+        int64_t remaining = content_length - static_cast<int64_t>(pending.size());
+        while (remaining > 0) {
+            char temp[1024];
+            ssize_t received = recv(sock, temp, sizeof(temp), 0);
+            if (received <= 0) return false;
+            remaining -= received;
+        }
+        return true;
+    }
+
+    // No length info; drain until the server closes.
+    while (true) {
+        char temp[1024];
+        ssize_t received = recv(sock, temp, sizeof(temp), 0);
+        if (received == 0) return true;
+        if (received < 0) return false;
+    }
+}
+
+class HttpConnection {
+public:
+    HttpConnection() = default;
+    explicit HttpConnection(HttpEndpoint endpoint) : endpoint_(std::move(endpoint)) {}
+    ~HttpConnection() { close_socket(); }
+
+    bool matches(const HttpEndpoint& endpoint) const {
+        return endpoint_.host == endpoint.host && endpoint_.port == endpoint.port &&
+               endpoint_.path == endpoint.path;
+    }
+
+    void reset(HttpEndpoint endpoint) {
+        close_socket();
+        endpoint_ = std::move(endpoint);
+    }
+
+    bool post_json(const string& payload) {
+        if (!ensure_connected()) return false;
+
+        string request = "POST " + endpoint_.path + " HTTP/1.1\r\n";
+        request += "Host: " + endpoint_.host + "\r\n";
+        request += "Content-Type: application/json\r\n";
+        request += "Content-Length: " + to_string(payload.size()) + "\r\n";
+        request += "Connection: keep-alive\r\n\r\n";
+        request += payload;
+
+        if (!send_all(sock_, request.data(), request.size())) {
+            close_socket();
+            return false;
+        }
+
+        if (!read_http_response(sock_)) {
+            close_socket();
+            return false;
+        }
+
+        return true;
+    }
+
+private:
+    HttpEndpoint endpoint_;
+    int sock_ = -1;
+
+    void close_socket() {
+        if (sock_ != -1) {
+            close(sock_);
+            sock_ = -1;
+        }
+    }
+
+    bool ensure_connected() {
+        if (sock_ != -1) return true;
+
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        if (getaddrinfo(endpoint_.host.c_str(), endpoint_.port.c_str(), &hints, &res) != 0) {
+            return false;
+        }
+
+        int sock = -1;
+        for (addrinfo* rp = res; rp != nullptr; rp = rp->ai_next) {
+            sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+            if (sock == -1) continue;
+            if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) break;
+            close(sock);
+            sock = -1;
+        }
+        freeaddrinfo(res);
+        if (sock == -1) return false;
+        if (!set_socket_timeouts(sock)) {
+            close(sock);
+            return false;
+        }
+        sock_ = sock;
+        return true;
+    }
+};
+
+static bool http_post_json(const HttpEndpoint& endpoint, const string& payload) {
+    thread_local HttpConnection conn;
+    if (!conn.matches(endpoint)) {
+        conn.reset(endpoint);
+    }
+    if (conn.post_json(payload)) return true;
+    conn.reset(endpoint);
+    return conn.post_json(payload);
 }
 #else
 static bool http_post_json(const HttpEndpoint&, const string&) {
@@ -318,19 +477,8 @@ static bool http_post_json(const HttpEndpoint&, const string&) {
 
 
 // ==========================================
-// 2. Helper Services (GPS & UUID)
+// 2. Helper Services (GPS)
 // ==========================================
-
-class TripIdGenerator {
-public:
-    static string generate() {
-        static const int64_t start_us = duration_cast<microseconds>(
-            system_clock::now().time_since_epoch()).count();
-        static atomic<uint64_t> counter{0};
-        uint64_t id = counter.fetch_add(1, memory_order_relaxed);
-        return to_string(start_us) + "-" + to_string(id);
-    }
-};
 
 class GeoService {
 private:
@@ -477,28 +625,15 @@ public:
         if (batch.empty()) return;
         lock_guard<mutex> lock(ingest_mu);
         for (auto& data : batch) {
-            data.trip_id = TripIdGenerator::generate();
             dataset.push_back(std::move(data));
             const RawTripData* p_data = &dataset.back();
             const auto& stored = *p_data;
 
             // 1. PICKUP event
-            event_queue.push({EventType::PICKUP, stored.tpep_pickup_datetime, p_data, 0.0, 0.0});
+            event_queue.push({EventType::PICKUP, stored.tpep_pickup_datetime, p_data});
 
-            // 2. IN_TRANSIT events (every 30 seconds)
-            int64_t current_time = stored.tpep_pickup_datetime + TRANSIT_UPDATE_INTERVAL_US;
-            while (current_time < stored.tpep_dropoff_datetime) {
-                auto coords = geo_service.interpolate(
-                    stored.PULocationID, stored.DOLocationID,
-                    stored.tpep_pickup_datetime, stored.tpep_dropoff_datetime,
-                    current_time
-                );
-                event_queue.push({EventType::IN_TRANSIT, current_time, p_data, coords.first, coords.second});
-                current_time += TRANSIT_UPDATE_INTERVAL_US;
-            }
-
-            // 3. DROPOFF event
-            event_queue.push({EventType::DROPOFF, stored.tpep_dropoff_datetime, p_data, 0.0, 0.0});
+            // 2. DROPOFF event
+            event_queue.push({EventType::DROPOFF, stored.tpep_dropoff_datetime, p_data});
         }
     }
 
@@ -519,7 +654,7 @@ public:
 
         size_t sender_count = thread::hardware_concurrency();
         if (sender_count == 0) sender_count = 1;
-        sender_count *= 2;
+        sender_count = ingestion_endpoint_ok ? sender_count * 2 : 1;
 
         vector<thread> senders;
         senders.reserve(sender_count);
@@ -549,6 +684,8 @@ public:
 private:
     static string format_timestamp(int64_t us) {
         time_t seconds = static_cast<time_t>(us / 1000000LL);
+        int64_t micros = us % 1000000LL;
+        if (micros < 0) micros += 1000000LL;
         tm tm_value{};
 #if defined(__unix__) || defined(__APPLE__)
         gmtime_r(&seconds, &tm_value);
@@ -557,8 +694,10 @@ private:
         if (tm_ptr) tm_value = *tm_ptr;
 #endif
         char buffer[32];
-        strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm_value);
-        return string(buffer);
+        strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &tm_value);
+        ostringstream out;
+        out << buffer << "." << setw(6) << setfill('0') << micros << "Z";
+        return out.str();
     }
 
     /**
@@ -592,6 +731,14 @@ private:
                     case EventType::PICKUP: pickup_count.fetch_add(1); break;
                     case EventType::IN_TRANSIT: transit_count.fetch_add(1); break;
                     case EventType::DROPOFF: dropoff_count.fetch_add(1); break;
+                }
+
+                // Lazily schedule IN_TRANSIT events to avoid precomputing all segments.
+                if (ev.type == EventType::PICKUP || ev.type == EventType::IN_TRANSIT) {
+                    int64_t next_time = ev.event_time_us + TRANSIT_UPDATE_INTERVAL_US;
+                    if (next_time < ev.raw_data->tpep_dropoff_datetime) {
+                        event_queue.push({EventType::IN_TRANSIT, next_time, ev.raw_data});
+                    }
                 }
                 
                 processed++;
@@ -640,31 +787,45 @@ private:
         if (ev.type == EventType::PICKUP) {
             auto coords = geo_service.get_coords(d->PULocationID);
             json << "\"event\": \"PICKUP\", "
-                 << "\"trip_id\": \"" << d->trip_id << "\", "
-                 << "\"pu_loc\": " << d->PULocationID << ", "
+                 << "\"trip_id\": " << d->trip_id << ", "
+                 << "\"PULocationID\": " << d->PULocationID << ", "
                  << "\"lat\": " << fixed << setprecision(6) << coords.first << ", "
                  << "\"lon\": " << coords.second << ", "
-                 << "\"vendor_id\": " << d->VendorID << ", "
-                 << "\"passenger\": " << d->passenger_count << ", "
+                 << "\"VendorID\": " << d->VendorID << ", "
+                 << "\"passenger_count\": " << d->passenger_count << ", "
                  << "\"ts\": \"" << format_timestamp(d->tpep_pickup_datetime) << "\"";
         } 
         else if (ev.type == EventType::IN_TRANSIT) {
+            auto coords = geo_service.interpolate(
+                d->PULocationID, d->DOLocationID,
+                d->tpep_pickup_datetime, d->tpep_dropoff_datetime,
+                ev.event_time_us
+            );
             json << "\"event\": \"IN_TRANSIT\", "
-                 << "\"trip_id\": \"" << d->trip_id << "\", "
-                 << "\"lat\": " << fixed << setprecision(6) << ev.current_lat << ", "
-                 << "\"lon\": " << ev.current_lon << ", "
+                 << "\"trip_id\": " << d->trip_id << ", "
+                 << "\"lat\": " << fixed << setprecision(6) << coords.first << ", "
+                 << "\"lon\": " << coords.second << ", "
                  << "\"ts\": \"" << format_timestamp(ev.event_time_us) << "\"";
         } 
         else { // DROPOFF
             auto coords = geo_service.get_coords(d->DOLocationID);
             json << "\"event\": \"DROPOFF\", "
-                 << "\"trip_id\": \"" << d->trip_id << "\", "
-                 << "\"do_loc\": " << d->DOLocationID << ", "
+                 << "\"trip_id\": " << d->trip_id << ", "
+                 << "\"DOLocationID\": " << d->DOLocationID << ", "
                  << "\"lat\": " << fixed << setprecision(6) << coords.first << ", "
                  << "\"lon\": " << coords.second << ", "
-                 << "\"fare\": " << d->fare_amount << ", "
-                 << "\"total\": " << d->total_amount << ", "
-                 << "\"dist\": " << d->trip_distance << ", "
+                 << "\"fare_amount\": " << d->fare_amount << ", "
+                 << "\"total_amount\": " << d->total_amount << ", "
+                 << "\"trip_distance\": " << d->trip_distance << ", "
+                 << "\"RatecodeID\": " << d->RatecodeID << ", "
+                 << "\"payment_type\": " << d->payment_type << ", "
+                 << "\"extra\": " << d->extra << ", "
+                 << "\"mta_tax\": " << d->mta_tax << ", "
+                 << "\"tip_amount\": " << d->tip_amount << ", "
+                 << "\"tolls_amount\": " << d->tolls_amount << ", "
+                 << "\"improvement_surcharge\": " << d->improvement_surcharge << ", "
+                 << "\"congestion_surcharge\": " << d->congestion_surcharge << ", "
+                 << "\"Airport_fee\": " << d->Airport_fee << ", "
                  << "\"ts\": \"" << format_timestamp(d->tpep_dropoff_datetime) << "\"";
         }
         json << "}";
@@ -674,7 +835,6 @@ private:
 
     void post_payload(const string& payload) {
         if (!ingestion_endpoint_ok) {
-            lock_guard<mutex> lock(log_mu);
             cout << "[NET] " << payload << endl;
             return;
         }
@@ -715,9 +875,10 @@ public:
 
         sort(files.begin(), files.end());
 
+        const size_t max_workers = 2;
         size_t worker_count = thread::hardware_concurrency();
         if (worker_count == 0) worker_count = 1;
-        worker_count *= 2;
+        worker_count = min(worker_count, max_workers);
 
         atomic<size_t> next_index{0};
         mutex log_mu;
@@ -813,11 +974,13 @@ private:
         return value / 1000LL; // nanos -> us
     }
 
-    static int64_t first_nonzero(const vector<int64_t>& values) {
-        for (int64_t value : values) {
+    static int64_t first_nonzero_in_array(const shared_ptr<arrow::Array>& arr) {
+        if (!arr || arr->length() == 0) return 0;
+        for (int64_t i = 0; i < arr->length(); ++i) {
+            int64_t value = get_int64_value(arr, i, 0);
             if (value != 0) return value;
         }
-        return values.empty() ? 0 : values.front();
+        return get_int64_value(arr, 0, 0);
     }
 
     static bool is_reasonable_epoch_us(int64_t value) {
@@ -846,11 +1009,10 @@ private:
 
     static void log_timestamp_sample(const string& path,
                                      const string& label,
-                                     const shared_ptr<arrow::ChunkedArray>& column,
-                                     const vector<int64_t>& values) {
-        if (values.empty()) return;
+                                     const shared_ptr<arrow::Array>& column) {
+        if (!column || column->length() == 0) return;
         static mutex log_mu;
-        int64_t raw = first_nonzero(values);
+        int64_t raw = first_nonzero_in_array(column);
         int64_t normalized = normalize_epoch_us(raw);
         string type = column ? column->type()->ToString() : "missing";
         string iso = format_epoch_us(normalized);
@@ -959,6 +1121,97 @@ private:
         }
     }
 
+    static shared_ptr<arrow::Array> get_column(const shared_ptr<arrow::RecordBatch>& batch,
+                                               const string& name) {
+        if (!batch) return nullptr;
+        int idx = batch->schema()->GetFieldIndex(name);
+        if (idx < 0) return nullptr;
+        return batch->column(idx);
+    }
+
+    static size_t process_record_batch(const string& path,
+                                       const shared_ptr<arrow::RecordBatch>& batch,
+                                       UberSimulator& sim,
+                                       bool& logged_samples) {
+        if (!batch || batch->num_rows() == 0) return 0;
+
+        auto pu_times = get_column(batch, "tpep_pickup_datetime");
+        auto do_times = get_column(batch, "tpep_dropoff_datetime");
+
+        if (!pu_times || !do_times) {
+            cerr << "[Loader] Missing required timestamps in: " << path << endl;
+            return 0;
+        }
+
+        if (!logged_samples) {
+            log_timestamp_sample(path, "pickup", pu_times);
+            log_timestamp_sample(path, "dropoff", do_times);
+            logged_samples = true;
+        }
+
+        auto trip_ids = get_column(batch, "trip_id");
+        auto pu_locs = get_column(batch, "PULocationID");
+        auto do_locs = get_column(batch, "DOLocationID");
+        auto vendors = get_column(batch, "VendorID");
+        auto ratecodes = get_column(batch, "RatecodeID");
+        auto payment_types = get_column(batch, "payment_type");
+        auto store_flags = get_column(batch, "store_and_fwd_flag");
+        auto passengers = get_column(batch, "passenger_count");
+
+        auto congestion = get_column(batch, "congestion_surcharge");
+        auto extras = get_column(batch, "extra");
+        auto fares = get_column(batch, "fare_amount");
+        auto improvements = get_column(batch, "improvement_surcharge");
+        auto mta_taxes = get_column(batch, "mta_tax");
+        auto tips = get_column(batch, "tip_amount");
+        auto tolls = get_column(batch, "tolls_amount");
+        auto totals = get_column(batch, "total_amount");
+        auto dists = get_column(batch, "trip_distance");
+        auto airport_fees = get_column(batch, "Airport_fee");
+
+        if (!trip_ids) {
+            cerr << "[Loader] Missing trip_id column in: " << path << endl;
+            return 0;
+        }
+
+        vector<RawTripData> batch_data;
+        batch_data.reserve(batch->num_rows());
+
+        for (int64_t i = 0; i < batch->num_rows(); ++i) {
+            RawTripData data;
+            data.trip_id = get_int64_value(trip_ids, i, 0);
+            data.tpep_pickup_datetime = normalize_epoch_us(get_int64_value(pu_times, i, 0));
+            data.tpep_dropoff_datetime = normalize_epoch_us(get_int64_value(do_times, i, 0));
+            data.PULocationID = get_int64_value(pu_locs, i, 0);
+            data.DOLocationID = get_int64_value(do_locs, i, 0);
+
+            data.VendorID = get_int64_value(vendors, i, 0);
+            data.RatecodeID = get_int64_value(ratecodes, i, 0);
+            data.payment_type = get_int64_value(payment_types, i, 0);
+            data.store_and_fwd_flag = get_string_value(store_flags, i);
+            data.passenger_count = get_int64_value(passengers, i, 0);
+
+            data.congestion_surcharge = get_double_value(congestion, i, 0.0);
+            data.extra = get_double_value(extras, i, 0.0);
+            data.fare_amount = get_double_value(fares, i, 0.0);
+            data.improvement_surcharge = get_double_value(improvements, i, 0.0);
+            data.mta_tax = get_double_value(mta_taxes, i, 0.0);
+            data.tip_amount = get_double_value(tips, i, 0.0);
+            data.tolls_amount = get_double_value(tolls, i, 0.0);
+            data.total_amount = get_double_value(totals, i, 0.0);
+            data.trip_distance = get_double_value(dists, i, 0.0);
+            data.Airport_fee = get_double_value(airport_fees, i, 0.0);
+
+            batch_data.push_back(std::move(data));
+        }
+
+        size_t ingested = batch_data.size();
+        if (ingested > 0) {
+            sim.ingest_trips(std::move(batch_data));
+        }
+        return ingested;
+    }
+
     static void load_file(const string& path, UberSimulator& sim) {
         arrow::Status st;
         arrow::MemoryPool* pool = arrow::default_memory_pool();
@@ -976,124 +1229,37 @@ private:
             return;
         }
 
-        std::shared_ptr<arrow::Table> table;
-        st = reader->ReadTable(&table);
-        if (!st.ok()) {
-            cerr << "[Loader] Failed to read table for " << path << ": " << st.ToString() << endl;
-            return;
-        }
-        cout << "[Loader] Table rows: " << table->num_rows() << endl;
+        int row_groups = reader->num_row_groups();
+        size_t ingested_total = 0;
+        int64_t row_total = 0;
+        bool logged_samples = false;
 
-        auto get_int64 = [&](string name) { return extract_int64(table, name); };
-        auto get_double = [&](string name) { return extract_double(table, name); };
-        auto get_string = [&](string name) { return extract_string(table, name); };
+        for (int rg = 0; rg < row_groups; ++rg) {
+            std::shared_ptr<arrow::Table> table;
+            st = reader->ReadRowGroups({rg}, &table);
+            if (!st.ok()) {
+                cerr << "[Loader] Failed to read row group for " << path << ": " << st.ToString() << endl;
+                continue;
+            }
+            if (!table) continue;
+            row_total += table->num_rows();
 
-        auto pu_col = table->GetColumnByName("tpep_pickup_datetime");
-        auto do_col = table->GetColumnByName("tpep_dropoff_datetime");
-
-        auto pu_times = get_int64("tpep_pickup_datetime");
-        auto do_times = get_int64("tpep_dropoff_datetime");
-        auto pu_locs = get_int64("PULocationID");
-        auto do_locs = get_int64("DOLocationID");
-        auto vendors = get_int64("VendorID");
-        auto ratecodes = get_int64("RatecodeID");
-        auto payment_types = get_int64("payment_type");
-        auto store_flags = get_string("store_and_fwd_flag");
-        auto passengers = get_int64("passenger_count");
-
-        auto congestion = get_double("congestion_surcharge");
-        auto extras = get_double("extra");
-        auto fares = get_double("fare_amount");
-        auto improvements = get_double("improvement_surcharge");
-        auto mta_taxes = get_double("mta_tax");
-        auto tips = get_double("tip_amount");
-        auto tolls = get_double("tolls_amount");
-        auto totals = get_double("total_amount");
-        auto dists = get_double("trip_distance");
-        auto airport_fees = get_double("Airport_fee");
-
-        log_timestamp_sample(path, "pickup", pu_col, pu_times);
-        log_timestamp_sample(path, "dropoff", do_col, do_times);
-
-        if (pu_times.empty() || do_times.empty()) {
-            cerr << "[Loader] Missing required timestamps in: " << path << endl;
-            return;
-        }
-
-        size_t row_count = min(pu_times.size(), do_times.size());
-        size_t ingested = 0;
-        vector<RawTripData> batch;
-        batch.reserve(row_count);
-
-        for (size_t i = 0; i < row_count; ++i) {
-            RawTripData data;
-            data.tpep_pickup_datetime = normalize_epoch_us(pu_times[i]);
-            data.tpep_dropoff_datetime = normalize_epoch_us(do_times[i]);
-            data.PULocationID = (i < pu_locs.size()) ? pu_locs[i] : 0;
-            data.DOLocationID = (i < do_locs.size()) ? do_locs[i] : 0;
-
-            data.VendorID = (i < vendors.size()) ? vendors[i] : 0;
-            data.RatecodeID = (i < ratecodes.size()) ? ratecodes[i] : 0;
-            data.payment_type = (i < payment_types.size()) ? payment_types[i] : 0;
-            data.store_and_fwd_flag = (i < store_flags.size()) ? store_flags[i] : "";
-            data.passenger_count = (i < passengers.size()) ? passengers[i] : 0;
-
-            data.congestion_surcharge = (i < congestion.size()) ? congestion[i] : 0.0;
-            data.extra = (i < extras.size()) ? extras[i] : 0.0;
-            data.fare_amount = (i < fares.size()) ? fares[i] : 0.0;
-            data.improvement_surcharge = (i < improvements.size()) ? improvements[i] : 0.0;
-            data.mta_tax = (i < mta_taxes.size()) ? mta_taxes[i] : 0.0;
-            data.tip_amount = (i < tips.size()) ? tips[i] : 0.0;
-            data.tolls_amount = (i < tolls.size()) ? tolls[i] : 0.0;
-            data.total_amount = (i < totals.size()) ? totals[i] : 0.0;
-            data.trip_distance = (i < dists.size()) ? dists[i] : 0.0;
-            data.Airport_fee = (i < airport_fees.size()) ? airport_fees[i] : 0.0;
-
-            batch.push_back(std::move(data));
-            ingested++;
-        }
-        sim.ingest_trips(std::move(batch));
-        cout << "[Loader] " << path << " rows=" << row_count
-             << " ingested=" << ingested << endl;
-    }
-
-    static vector<int64_t> extract_int64(shared_ptr<arrow::Table> table, string col_name) {
-        auto col = table->GetColumnByName(col_name);
-        vector<int64_t> result;
-        if (!col) return result;
-        result.reserve(table->num_rows());
-        for (auto& chunk : col->chunks()) {
-            for (int64_t i = 0; i < chunk->length(); ++i) {
-                result.push_back(get_int64_value(chunk, i, 0));
+            arrow::TableBatchReader batch_reader(*table);
+            batch_reader.set_chunksize(16384);
+            while (true) {
+                std::shared_ptr<arrow::RecordBatch> batch;
+                st = batch_reader.ReadNext(&batch);
+                if (!st.ok()) {
+                    cerr << "[Loader] Failed to read batch for " << path << ": " << st.ToString() << endl;
+                    break;
+                }
+                if (!batch) break;
+                ingested_total += process_record_batch(path, batch, sim, logged_samples);
             }
         }
-        return result;
-    }
 
-    static vector<double> extract_double(shared_ptr<arrow::Table> table, string col_name) {
-        auto col = table->GetColumnByName(col_name);
-        vector<double> result;
-        if (!col) return result;
-        result.reserve(table->num_rows());
-        for (auto& chunk : col->chunks()) {
-            for (int64_t i = 0; i < chunk->length(); ++i) {
-                result.push_back(get_double_value(chunk, i, 0.0));
-            }
-        }
-        return result;
-    }
-
-    static vector<string> extract_string(shared_ptr<arrow::Table> table, string col_name) {
-        auto col = table->GetColumnByName(col_name);
-        vector<string> result;
-        if (!col) return result;
-        result.reserve(table->num_rows());
-        for (auto& chunk : col->chunks()) {
-            for (int64_t i = 0; i < chunk->length(); ++i) {
-                result.push_back(get_string_value(chunk, i));
-            }
-        }
-        return result;
+        cout << "[Loader] " << path << " rows=" << row_total
+             << " ingested=" << ingested_total << endl;
     }
 };
 

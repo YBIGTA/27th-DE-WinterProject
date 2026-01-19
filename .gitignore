@@ -5,19 +5,54 @@ build/
 dist/
 wheels/
 *.egg-info
+.ipynb_checkpoints/
 
 # Virtual environments
 .venv
 
+# IDE/editor
+.idea/
+.vscode/
+
 # data
 /data/taxi_data
 /data/taxi_data_preprocessed
-/data/taxi_data_preprocessed_ex1
 
 # generator
 /generator/build
 /generator/CMakeUserPresets.json
 
+# C++ build artifacts
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Gradle
+.gradle/
+
 # ingestor
 /ingestor/test_ingestion.class
 /ingestor/test_ingestion$Stats.class
+/ingestor/.gradle/
+/ingestor/build/
+/ingestor/out/
+/ingestor/.idea/
+/ingestor/*.iml
+/ingestor/.classpath
+/ingestor/.project
+/ingestor/.settings/
+
+# logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Java bytecode
+*.class

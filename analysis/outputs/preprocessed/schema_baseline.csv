@@ -18,3 +18,4 @@ tpep_dropoff_datetime,timestamp[us]
 tpep_pickup_datetime,timestamp[us]
 trip_distance,double
 Airport_fee,double
+trip_id,int64

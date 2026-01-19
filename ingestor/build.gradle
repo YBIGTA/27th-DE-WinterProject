@@ -1,0 +1,33 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.1'
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'com.ingestion'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = '17'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // 1. 핵심: WebFlux (Netty 기반 고성능 서버)
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    
+    // 2. Kafka 연동
+    implementation 'org.springframework.kafka:spring-kafka'
+    
+    // 3. 편의 도구 (Lombok, Jackson)
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    // 테스트용
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
+}
