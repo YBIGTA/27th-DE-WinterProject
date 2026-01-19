@@ -33,7 +33,7 @@ public class IngestionService {
 
     // 배치 설정
     private static final int BATCH_SIZE = 500;
-    private static final int BATCH_TIMEOUT_MS = 100;  // 50ms → 100ms로 증가
+    private static final int BATCH_TIMEOUT_MS = 50;   // 명세: 500 events OR 50ms
     private static final int BUFFER_SIZE = 10000;
     private static final int KAFKA_CONCURRENCY = 4;
 
