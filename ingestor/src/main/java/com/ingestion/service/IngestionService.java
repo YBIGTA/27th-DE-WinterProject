@@ -31,12 +31,18 @@ public class IngestionService {
     @Value("${app.kafka.topic}")
     private String topicName;
 
+    // 배치 설정
+    private static final int BATCH_SIZE = 500;
+    private static final int BATCH_TIMEOUT_MS = 100;  // 50ms → 100ms로 증가
+    private static final int BUFFER_SIZE = 10000;
+    private static final int KAFKA_CONCURRENCY = 4;
+
     // Buffer: 10,000 events with FAIL_FAST backpressure
     private final Sinks.Many<TaxiEvent> sink = Sinks.many()
             .multicast()
-            .onBackpressureBuffer(10000, false);
+            .onBackpressureBuffer(BUFFER_SIZE, false);
 
-    // Metrics for structured logging
+    // Metrics
     private final AtomicLong eventsReceived = new AtomicLong(0);
     private final AtomicLong eventsProcessed = new AtomicLong(0);
     private final AtomicLong eventsFailed = new AtomicLong(0);
@@ -45,19 +51,20 @@ public class IngestionService {
 
     @PostConstruct
     public void init() {
-        log.info("[STARTUP] Initializing ingestion pipeline: buffer=10000, batch=500, timeout=50ms, topic={}", topicName);
+        log.info("[STARTUP] Initializing ingestion pipeline: buffer={}, batch={}, timeout={}ms, concurrency={}, topic={}",
+                BUFFER_SIZE, BATCH_SIZE, BATCH_TIMEOUT_MS, KAFKA_CONCURRENCY, topicName);
 
         // Pipeline: Buffer → Batch → Parallel Kafka Send with Retry
         sink.asFlux()
-            .bufferTimeout(500, Duration.ofMillis(50))
-            .flatMap(this::sendBatchToKafkaReactive, 4)  // 4 concurrent Kafka sends
-            .doOnError(e -> log.error("[PIPELINE] Critical error in pipeline", e))
-            .retry()  // Retry the entire subscription if it fails
+            .bufferTimeout(BATCH_SIZE, Duration.ofMillis(BATCH_TIMEOUT_MS))
+            .filter(batch -> !batch.isEmpty())
+            .flatMap(this::sendBatchToKafka, KAFKA_CONCURRENCY)
+            .onErrorContinue((error, obj) -> {
+                log.error("[PIPELINE] Error processing batch, continuing: {}", error.getMessage());
+            })
             .subscribe(
-                result -> {
-                    // Success metrics logged in sendBatchToKafkaReactive
-                },
-                error -> log.error("[PIPELINE] Pipeline terminated with error", error),
+                result -> {},
+                error -> log.error("[PIPELINE] Pipeline terminated unexpectedly", error),
                 () -> log.info("[SHUTDOWN] Pipeline completed")
             );
 
@@ -68,73 +75,77 @@ public class IngestionService {
     }
 
     /**
-     * Send a batch to Kafka using Reactor Kafka with retry logic.
-     * Uses parallel sends for high throughput.
+     * Send a batch to Kafka with retry logic at batch level.
      */
-    private Mono<Void> sendBatchToKafkaReactive(List<TaxiEvent> batch) {
+    private Mono<Long> sendBatchToKafka(List<TaxiEvent> batch) {
         if (batch.isEmpty()) {
-            return Mono.empty();
+            return Mono.just(0L);
         }
 
         long batchStartTime = System.nanoTime();
         int batchSize = batch.size();
+        long batchId = batchesSent.incrementAndGet();
 
-        log.debug("[BATCH] Processing batch: size={}, buffer_usage={}%",
-                  batchSize, getBufferUsagePercent());
+        log.debug("[BATCH-{}] Processing: size={}", batchId, batchSize);
 
         // Convert batch to SenderRecord stream
-        Flux<SenderRecord<String, String, Integer>> records = Flux.fromIterable(batch)
-            .index()
-            .flatMap(tuple -> {
-                int index = tuple.getT1().intValue();
-                TaxiEvent event = tuple.getT2();
-
+        Flux<SenderRecord<String, String, Long>> records = Flux.fromIterable(batch)
+            .flatMap(event -> {
                 try {
-                    String key = String.valueOf(event.getTripId());
+                    String key = event.getTripId() != null
+                        ? String.valueOf(event.getTripId())
+                        : "unknown";
                     String value = objectMapper.writeValueAsString(event);
                     ProducerRecord<String, String> producerRecord =
                         new ProducerRecord<>(topicName, key, value);
-
-                    return Mono.just(SenderRecord.create(producerRecord, index));
+                    return Mono.just(SenderRecord.create(producerRecord, batchId));
                 } catch (Exception e) {
-                    log.error("[SERIALIZATION] Failed to serialize event: trip_id={}",
-                              event.getTripId(), e);
+                    log.error("[SERIALIZATION] Failed to serialize event: trip_id={}, error={}",
+                              event.getTripId(), e.getMessage());
                     eventsFailed.incrementAndGet();
-                    return Mono.empty();  // Skip this event
+                    return Mono.empty();
                 }
             });
 
-        // Send to Kafka with retry logic
+        // Send to Kafka with batch-level retry
         return kafkaSender.send(records)
             .doOnNext(result -> {
                 if (result.exception() != null) {
-                    log.error("[KAFKA] Send failed for record {}: {}",
-                              result.correlationMetadata(),
-                              result.exception().getMessage());
+                    log.warn("[KAFKA] Send failed for record: {}", result.exception().getMessage());
                     eventsFailed.incrementAndGet();
                 } else {
                     eventsProcessed.incrementAndGet();
                 }
             })
+            .count()
             .retryWhen(Retry.backoff(3, Duration.ofMillis(100))
                 .maxBackoff(Duration.ofSeconds(2))
+                .filter(this::isRetryableException)
                 .doBeforeRetry(signal ->
-                    log.warn("[RETRY] Retrying batch send: attempt={}, error={}",
-                             signal.totalRetries() + 1,
+                    log.warn("[RETRY] Batch-{} retry attempt {}: {}",
+                             batchId, signal.totalRetries() + 1,
                              signal.failure().getMessage())
                 )
             )
+            .doOnSuccess(count -> {
+                long durationMs = (System.nanoTime() - batchStartTime) / 1_000_000;
+                log.debug("[BATCH-{}] Completed: sent={}, duration_ms={}", batchId, count, durationMs);
+            })
             .doOnError(e -> {
-                log.error("[KAFKA] Batch send failed after retries: size={}", batchSize, e);
+                log.error("[KAFKA] Batch-{} failed after retries: {}", batchId, e.getMessage());
                 eventsFailed.addAndGet(batchSize);
             })
-            .then()
-            .doFinally(signalType -> {
-                long durationMs = (System.nanoTime() - batchStartTime) / 1_000_000;
-                batchesSent.incrementAndGet();
-                log.debug("[BATCH] Completed: size={}, duration_ms={}, signal={}",
-                          batchSize, durationMs, signalType);
-            });
+            .onErrorReturn(0L);
+    }
+
+    /**
+     * Determine if an exception is retryable.
+     */
+    private boolean isRetryableException(Throwable throwable) {
+        // Retry on network/timeout errors, not on serialization errors
+        String message = throwable.getMessage();
+        if (message == null) return true;
+        return !message.contains("Serialization") && !message.contains("serialize");
     }
 
     /**
@@ -146,8 +157,7 @@ public class IngestionService {
 
         if (result == Sinks.EmitResult.FAIL_OVERFLOW) {
             eventsDropped.incrementAndGet();
-            log.warn("[BACKPRESSURE] Buffer full, event dropped: trip_id={}, buffer_usage=100%",
-                     event.getTripId());
+            log.warn("[BACKPRESSURE] Buffer full, event dropped: trip_id={}", event.getTripId());
         }
 
         return result;
@@ -157,21 +167,15 @@ public class IngestionService {
      * Get buffer usage percentage for monitoring.
      */
     public int getBufferUsagePercent() {
-        // Estimate based on dropped events (Sinks API doesn't expose size)
-        // This is a rough approximation
-        long dropped = eventsDropped.get();
-        if (dropped > 0) {
-            return 100;  // If we've dropped any, buffer was full
-        }
-        // Can't accurately measure with Sinks API, return conservative estimate
         long received = eventsReceived.get();
         long processed = eventsProcessed.get();
-        long pending = received - processed;
+        long failed = eventsFailed.get();
+        long dropped = eventsDropped.get();
 
-        if (pending >= 10000) return 100;
-        if (pending >= 8000) return 80;
-        if (pending >= 5000) return 50;
-        return (int) ((pending * 100) / 10000);
+        long pending = received - processed - failed - dropped;
+        if (pending <= 0) return 0;
+        if (pending >= BUFFER_SIZE) return 100;
+        return (int) ((pending * 100) / BUFFER_SIZE);
     }
 
     /**
@@ -184,12 +188,11 @@ public class IngestionService {
         long dropped = eventsDropped.get();
         long batches = batchesSent.get();
 
-        log.info("[METRICS] events_received={}, events_processed={}, events_failed={}, " +
-                 "events_dropped={}, batches_sent={}, buffer_usage={}%, " +
-                 "success_rate={}",
+        double successRate = received > 0 ? (processed * 100.0 / received) : 0;
+
+        log.info("[METRICS] received={}, processed={}, failed={}, dropped={}, batches={}, buffer={}%, success_rate={:.2f}%",
                  received, processed, failed, dropped, batches,
-                 getBufferUsagePercent(),
-                 received > 0 ? String.format("%.2f%%", (processed * 100.0 / received)) : "N/A");
+                 getBufferUsagePercent(), successRate);
     }
 
     @PreDestroy
