@@ -9,8 +9,14 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
-        linger.ms: 10     # 10ms 정도 기다렸다 묶어 보내기 (Throughput 향상)
-        batch.size: 16384
+        linger.ms: 50              # Match bufferTimeout duration
+        batch.size: 32768          # 32KB batches
+        compression.type: lz4      # Fast compression
+        acks: 1                    # Leader acknowledgment
+        retries: 3
+        max.in.flight.requests.per.connection: 5
+        buffer.memory: 67108864    # 64MB
+        max.block.ms: 2000         # Match generator timeout
 
 app:
   kafka:
