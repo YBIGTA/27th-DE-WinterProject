@@ -1,5 +1,5 @@
 # Conan (recommended)
-# from generator/
+## from generator/
 uv run conan profile detect --force
 
 uv run conan install . -of build --build=missing
