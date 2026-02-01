@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,6 +19,14 @@ import reactor.core.publisher.Sinks;
 public class IngestionController {
 
     private final IngestionService ingestionService;
+
+    /**
+     * Health check endpoint for container orchestration.
+     */
+    @GetMapping("/health")
+    public Mono<ResponseEntity<String>> health() {
+        return Mono.just(ResponseEntity.ok("OK"));
+    }
 
     /**
      * Ingest endpoint for taxi events.
@@ -40,6 +49,12 @@ public class IngestionController {
                 log.warn("[BACKPRESSURE] Rejected event due to buffer overflow: trip_id={}",
                          event.getTripId());
                 return Mono.just(ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build());
+
+            case FAIL_NON_SERIALIZED:
+                // Should not happen after service-level retry, but handle anyway
+                log.warn("[CONCURRENCY] Event emission failed due to concurrent access: trip_id={}",
+                         event.getTripId());
+                return Mono.just(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build());
 
             default:
                 // Other failures (FAIL_CANCELLED, FAIL_TERMINATED, FAIL_ZERO_SUBSCRIBER)

@@ -43,6 +43,15 @@ public class IngestionService {
     private final AtomicLong eventsDropped = new AtomicLong(0);
     private final AtomicLong batchesSent = new AtomicLong(0);
 
+    // Custom emit failure handler for thread-safe emission
+    private final Sinks.EmitFailureHandler emitFailureHandler = (signalType, emitResult) -> {
+        if (emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
+            // Busy-loop retry for concurrent access - this is expected under high load
+            return true;  // retry
+        }
+        return false;  // don't retry for other failures (OVERFLOW, CANCELLED, etc.)
+    };
+
     @PostConstruct
     public void init() {
         log.info("[STARTUP] Initializing ingestion pipeline: buffer=10000, batch=500, timeout=50ms, topic={}", topicName);
@@ -139,10 +148,27 @@ public class IngestionService {
 
     /**
      * Ingest a single event. Returns emission result for controller to check.
+     * Uses emitNext with failure handler to handle FAIL_NON_SERIALIZED (concurrent access).
      */
     public Sinks.EmitResult ingest(TaxiEvent event) {
         eventsReceived.incrementAndGet();
+
+        // First try with tryEmitNext to get the result
         Sinks.EmitResult result = sink.tryEmitNext(event);
+
+        if (result == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
+            // Concurrent access detected - use emitNext with retry handler
+            try {
+                sink.emitNext(event, emitFailureHandler);
+                return Sinks.EmitResult.OK;
+            } catch (Exception e) {
+                // emitNext failed even after retries
+                eventsDropped.incrementAndGet();
+                log.warn("[EMIT] Failed to emit after retries: trip_id={}, error={}",
+                         event.getTripId(), e.getMessage());
+                return Sinks.EmitResult.FAIL_OVERFLOW;
+            }
+        }
 
         if (result == Sinks.EmitResult.FAIL_OVERFLOW) {
             eventsDropped.incrementAndGet();

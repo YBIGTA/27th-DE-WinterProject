@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  ingestor-1:
+    build: .
+    container_name: ingestor-1
+    ports:
+      - "8081:8080"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      APP_KAFKA_TOPIC: taxi-event-data
+      SERVER_PORT: 8080
+    networks:
+      - kafka_kafka-network
+    depends_on:
+      - kafka-healthcheck
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  ingestor-2:
+    build: .
+    container_name: ingestor-2
+    ports:
+      - "8082:8080"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      APP_KAFKA_TOPIC: taxi-event-data
+      SERVER_PORT: 8080
+    networks:
+      - kafka_kafka-network
+    depends_on:
+      - kafka-healthcheck
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  ingestor-3:
+    build: .
+    container_name: ingestor-3
+    ports:
+      - "8083:8080"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      APP_KAFKA_TOPIC: taxi-event-data
+      SERVER_PORT: 8080
+    networks:
+      - kafka_kafka-network
+    depends_on:
+      - kafka-healthcheck
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Nginx load balancer for the 3 ingestors
+  nginx-lb:
+    image: nginx:alpine
+    container_name: ingestor-lb
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - kafka_kafka-network
+    depends_on:
+      - ingestor-1
+      - ingestor-2
+      - ingestor-3
+    restart: unless-stopped
+
+  # Dummy service to check kafka is healthy
+  kafka-healthcheck:
+    image: busybox
+    container_name: kafka-healthcheck
+    command: ["sh", "-c", "echo 'Waiting for Kafka...' && sleep 5"]
+    networks:
+      - kafka_kafka-network
+
+networks:
+  kafka_kafka-network:
+    external: true
