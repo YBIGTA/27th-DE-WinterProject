@@ -1,0 +1,8 @@
+com\example\SpatialJoinFunction.class
+com\example\TaxiRealtimeJob.class
+com\example\TaxiRealtimeJob$DemandAggregator.class
+com\example\TaxiEvent.class
+com\example\SpatialJoinFunction$ZoneCoords.class
+com\example\TaxiRealtimeJob$1.class
+com\example\TaxiRealtimeJob$DemandWindowFn.class
+com\example\TaxiRealtimeJob$DemandRow.class
