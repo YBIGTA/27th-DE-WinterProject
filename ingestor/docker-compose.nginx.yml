@@ -1,0 +1,16 @@
+version: '3.8'
+
+# Nginx load balancer - run with:
+# docker compose -f docker-compose.nginx.yml up -d
+#
+# Before running, update nginx-standalone.conf with actual ingestor IPs
+
+services:
+  nginx-lb:
+    image: nginx:alpine
+    container_name: ingestor-lb
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-standalone.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped

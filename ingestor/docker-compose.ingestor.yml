@@ -1,0 +1,22 @@
+version: '3.8'
+
+# Single ingestor instance - run with:
+# INGESTOR_ID=1 INGESTOR_PORT=8081 docker compose -f docker-compose.ingestor.yml up -d
+
+services:
+  ingestor:
+    build: .
+    container_name: ingestor-${INGESTOR_ID:-1}
+    ports:
+      - "${INGESTOR_PORT:-8081}:8080"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}
+      APP_KAFKA_TOPIC: ${KAFKA_TOPIC:-taxi-event-data}
+      SERVER_PORT: 8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
