@@ -1,6 +1,8 @@
 # Flink Processor
 
-본 프로젝트는 NYC 택시 이벤트를 실시간으로 정제, 분석 및 적재하기 위한 데이터 파이프라인입니다. Apache Flink를 핵심 엔진으로 사용하며 Maven을 통해 의존성을 관리합니다.
+이 디렉토리는 NYC 택시 이벤트를 실시간으로 정제(Enrichment), 분석 및 적재하기 위한 **Apache Flink 스트림 프로세싱 엔진**의 구현체와 가이드를 포함합니다.
+
+Kafka로부터 유입되는 원시 데이터를 정제하여 OLAP 시스템(ClickHouse)에 적재하고, 3분 단위 수요 지표를 산출하여 **실시간 로그(Stdout)로 출력**함으로써 데이터 흐름을 모니터링하는 역할을 수행합니다.
 
 ## 📂 디렉토리 구조 (Directory Structure)
 
