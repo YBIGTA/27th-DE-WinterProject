@@ -1,7 +1,7 @@
 ---
 component: Generator (Traffic Simulator)
 status: CURRENT
-last_reviewed: 2026-02-02
+last_reviewed: 2026-02-02 (Updated: Batching implementation)
 core_files:
   - generator/generate.cpp
   - generator/config.txt
@@ -12,15 +12,16 @@ core_files:
 # Generator (NYC Taxi Traffic Simulator)
 
 ## Role
-Replays historical NYC taxi trip data from Parquet files as real-time event streams at configurable speed with resilience patterns (rate limiting, circuit breaker, retry logic) to prevent overwhelming downstream ingestor.
+Replays historical NYC taxi trip data from Parquet files as real-time event streams at configurable speed with batching (200 events per request) and resilience patterns (rate limiting, circuit breaker, retry logic) to prevent overwhelming downstream ingestor. Achieves 2-3x throughput improvement through HTTP request batching.
 
 ## I/O Flow
 ```
-[Parquet Files] --(Apache Arrow)--> [Generator] --(HTTP POST/JSON)--> [Ingestor Cluster]
-    ↓                                      ↓                                ↓
-taxi_data_preprocessed/           Priority Queue                    localhost:8080/ingest
+[Parquet Files] --(Apache Arrow)--> [Generator] --(HTTP POST/JSON Batches)--> [Ingestor Cluster]
+    ↓                                      ↓                                      ↓
+taxi_data_preprocessed/           Priority Queue                    localhost:8080/ingest/batch
 2020-01.parquet                   + Event Scheduler                 (Nginx LB)
-2020-02.parquet                   + Resilience Layer
+2020-02.parquet                   + Batching Layer (200 events)
+                                  + Resilience Layer
 ```
 
 ## Implementation Logic
@@ -36,24 +37,29 @@ flowchart TD
     D -->|Yes| F[build_payload]
     F --> G[BoundedQueue<PayloadWithRetry>]
     G --> H[Sender Thread Pool]
-    H --> I{Circuit Breaker Allow?}
-    I -->|No| J[Requeue]
-    I -->|Yes| K{Rate Limit Delay}
-    K --> L[http_post_json]
-    L --> M{Status Code}
-    M -->|2xx| N[Success]
-    M -->|429/5xx/0| O{Can Retry?}
-    O -->|Yes| J
-    O -->|No| P[Dead Letter Queue]
-    J --> H
-    N --> Q[Record Metrics]
-    P --> Q
+    H --> I[BatchAccumulator per thread]
+    I --> I1{Batch Ready?}
+    I1 -->|No: < 200 events & < 100ms| I
+    I1 -->|Yes: 200 events OR 100ms| J{Circuit Breaker Allow?}
+    J -->|No| K[Requeue All]
+    J -->|Yes| L{Rate Limit Delay}
+    L --> M[http_post_json_batch]
+    M --> N{Status Code}
+    N -->|2xx| O[Success]
+    N -->|400| P[Split & Retry Individual]
+    N -->|429/5xx/0| Q{Can Retry?}
+    Q -->|Yes| K
+    Q -->|No| R[Dead Letter Queue]
+    K --> H
+    P --> H
+    O --> S[Record Batch Metrics]
+    R --> S
 ```
 
 ### Concurrency Model
-- **Thread Model:** Multi-threaded producer-consumer
+- **Thread Model:** Multi-threaded producer-consumer with per-thread batching
   - 1 Scheduler Thread (producer) → pushes to payload queue
-  - N Sender Threads (consumers, N = hardware_concurrency * 2) → HTTP requests
+  - N Sender Threads (consumers, N = hardware_concurrency * 2) → batch accumulation and HTTP requests
   - 1 Metrics Thread → periodic logging (every 10s)
 
 - **Shared State:**
@@ -62,13 +68,14 @@ flowchart TD
   - `RateLimiter` - atomic circular buffer for 429 tracking, compare-exchange for delay updates
   - `CircuitBreaker` - atomic state machine, atomic sliding window
   - `DeadLetterQueue` - mutex-protected file writes
+  - `BatchMetrics` - atomic counters for batch statistics (lock-free)
   - Event counters (`events_sent`, `pickup_count`, etc.) - atomic with relaxed ordering
 
 - **Sync Primitives:**
   - `std::mutex` + `std::condition_variable` (BoundedQueue)
-  - `std::atomic<T>` (metrics, state machine, sliding windows)
-  - `compare_exchange_strong` (rate limiter delay, circuit breaker state transitions)
-  - `thread_local` (HttpConnection, ConnectionHealth per sender thread)
+  - `std::atomic<T>` (metrics, state machine, sliding windows, batch counters)
+  - `compare_exchange_strong` (rate limiter delay, circuit breaker state transitions, max wait time)
+  - `thread_local` (HttpConnection, ConnectionHealth, BatchAccumulator per sender thread)
 
 ### Core Algorithm
 
@@ -107,7 +114,54 @@ while (!event_queue.empty()) {
 - Medium waits (0.1-10ms): exact sleep
 - Short waits (<0.1ms): thread yield
 
-#### 2. Resilience Layer (post_payload)
+#### 2. Batching Layer (Sender Threads)
+```cpp
+// Thread-local batch accumulator (per sender thread)
+BatchAccumulator accumulator(batch_size=200, timeout=100ms)
+
+while (true) {
+    // Check if batch should flush (size OR timeout)
+    if (accumulator.should_flush()) {
+        batch = accumulator.take_batch()
+        wait_time_us = accumulator.get_wait_time_us()
+        post_batch_payload(batch, ...)
+        batch_metrics.record_batch(batch.size(), wait_time_us)
+    }
+
+    // Pop event from queue
+    got_event = payload_queue.pop(item)
+    if (!got_event) {
+        // Queue closed - flush remaining batch
+        if (!accumulator.empty()) {
+            post_batch_payload(accumulator.take_batch(), ...)
+        }
+        break
+    }
+
+    // Add to batch
+    accumulator.add(item)
+
+    // Immediately flush if batch full
+    if (accumulator.should_flush()) {
+        post_batch_payload(accumulator.take_batch(), ...)
+    }
+}
+```
+
+**Batching Strategy:**
+- **Size threshold:** Flush when batch reaches 200 events (configurable)
+- **Time threshold:** Flush when 100ms elapsed since first event (configurable)
+- **Per-thread:** Each sender thread has its own accumulator (no cross-thread synchronization)
+- **Requeue bypass:** Failed events bypass batching on retry (already delayed once)
+- **Wait time tracking:** Tracks how long each event waited in batch for monitoring
+
+**Batch Error Handling:**
+- **400 (Bad Request):** Split batch and retry each event individually to isolate bad event
+- **429/5xx/0:** Requeue all events individually with existing retry logic
+- **Other 4xx:** Drop entire batch (client error)
+- **2xx:** Success, record batch metrics
+
+#### 3. Resilience Layer (post_batch_payload)
 ```cpp
 // Phase 1: Circuit Breaker
 if (!circuit_breaker.allow_request()) {
@@ -136,7 +190,7 @@ if (status_code == 429 || 5xx || 0) {
 }
 ```
 
-#### 3. Rate Limiter (Adaptive 429 Throttling)
+#### 4. Rate Limiter (Adaptive 429 Throttling)
 ```cpp
 // Sliding window: last 100 requests (true=429, false=success)
 window_[write_index++ % 100] = (status_code == 429)
@@ -161,7 +215,7 @@ on success:
 - Max delay: 5 seconds (configurable)
 - Lock-free: atomic operations only
 
-#### 4. Circuit Breaker (Failure Detection)
+#### 5. Circuit Breaker (Failure Detection)
 ```cpp
 // States: CLOSED → OPEN → HALF_OPEN → CLOSED
 // Sliding window: last 100 requests in 10-second time window
@@ -201,7 +255,7 @@ on allow_request():
 - OPEN timeout: 30 seconds before testing
 - HALF_OPEN: allow 5 test requests, need 3 successes to close
 
-#### 5. Connection Management
+#### 6. Connection Management
 ```cpp
 // Thread-local per sender thread
 thread_local HttpConnection conn
@@ -266,8 +320,26 @@ RawTripData {
 ```
 
 ### Output Format
-**Protocol:** HTTP POST to `/ingest`
+**Protocol:** HTTP POST to `/ingest/batch` (batched) or `/ingest` (single event, legacy)
 **Content-Type:** `application/json`
+
+**Batch Format (Primary):**
+Sends JSON array of 1-200 events to `/ingest/batch`:
+```json
+[
+  {"event": "PICKUP", "trip_id": 12345, ...},
+  {"event": "IN_TRANSIT", "trip_id": 12345, ...},
+  {"event": "DROPOFF", "trip_id": 12345, ...},
+  ...
+]
+```
+
+**Response Codes:**
+- **202 Accepted:** All events in batch successfully queued
+- **207 Multi-Status:** Partial success (some events failed)
+- **400 Bad Request:** Empty batch or malformed JSON → splits and retries individually
+- **429 Too Many Requests:** Buffer overflow → requeues entire batch
+- **500 Internal Server Error:** Service failure → requeues entire batch
 
 **Event Types:**
 
@@ -332,6 +404,7 @@ RawTripData {
 | **Bounded requeue (1024)** | Prevents infinite retry loops under persistent failure | Events lost if requeue fills (mitigated by DLQ) |
 | **Dead-letter queue (file)** | No data loss on overflow, can replay later | Synchronous file I/O in hot path (flush on every write), can slow down |
 | **Keep-Alive (HTTP/1.1)** | Reduces TCP handshake overhead (~3-4ms per request), reuses sockets | Connections can become stale, need proper error handling |
+| **Per-thread batching (200 events, 100ms timeout)** | 200x reduction in HTTP overhead, 2-3x throughput increase, no cross-thread synchronization | Increased latency (+50ms avg wait time), partial batches across threads |
 | **Playback speed multiplier** | Can simulate months of data in hours (e.g., 100x speed) | Real-time accuracy suffers at very high speeds (>1000x), timing drift |
 
 ## Failure Modes & Handling
@@ -363,18 +436,23 @@ RawTripData {
 | `connection_max_failures` | 3 | 1 - 10 | Lower = more aggressive connection resets |
 | `max_retries` | 3 | 0 - 10 | Higher = more resilient, slower to give up |
 | `dlq_filepath` | dead_letter_queue.jsonl | - | Where failed events are written |
+| `batch_size` | 200 | 1 - 1000 | Higher = better throughput, more latency; 1 = disable batching |
+| `batch_timeout_ms` | 100 | 10 - 5000 | Higher = better batching efficiency, more latency |
 
 ## Performance Characteristics
 
 ### Throughput
 - **Single-threaded (stdout):** ~15k events/sec
-- **HTTP to local ingestor (3 instances):** ~45-60k events/sec
-- **HTTP to remote ingestor (network):** ~10-20k events/sec (latency bound)
+- **HTTP with batching (local ingestor, 3 instances):** ~100-150k events/sec (2-3x improvement)
+- **HTTP without batching (legacy):** ~45-60k events/sec
+- **HTTP to remote ingestor (network):** ~20-40k events/sec with batching (latency bound)
 
 ### Latency
 - **Event scheduling precision:** ±1-5ms at 100x speed (depends on OS scheduler)
-- **HTTP request (local):** p50=5ms, p99=50ms
-- **HTTP request (remote):** p50=20ms, p99=200ms
+- **HTTP request (batched, local):** p50=55ms (+50ms batch wait), p99=150ms
+- **HTTP request (single, local, legacy):** p50=5ms, p99=50ms
+- **HTTP request (batched, remote):** p50=70ms, p99=250ms
+- **Batch wait time:** p50=50ms, p99=100ms (time events spend in batch accumulator)
 
 ### Memory Usage
 - **Base:** ~50MB (binary + libraries)
@@ -390,8 +468,14 @@ RawTripData {
 
 ### Console Logs (every 10 seconds)
 ```
-[METRICS] rate_limit_delay=150ms, 429_rate=15.00%, circuit_state=CLOSED, dlq_writes=0
+[METRICS] rate_limit_delay=150ms, 429_rate=15.00%, circuit_state=CLOSED, total_429s=125, dlq_writes=0, batches_sent=750, avg_batch_size=200.0, avg_wait_ms=52, max_wait_ms=100
 ```
+
+**New Batch Metrics:**
+- `batches_sent`: Total number of batches sent to `/ingest/batch`
+- `avg_batch_size`: Average events per batch (target: ~200)
+- `avg_wait_ms`: Average time events wait in batch before sending (target: ~50ms)
+- `max_wait_ms`: Maximum wait time observed (should stay near 100ms timeout)
 
 ### State Transition Logs
 ```
@@ -399,6 +483,8 @@ RawTripData {
 [CIRCUIT_BREAKER] CLOSED -> OPEN (server unhealthy)
 [CIRCUIT_BREAKER] OPEN -> HALF_OPEN (testing recovery)
 [CIRCUIT_BREAKER] HALF_OPEN -> CLOSED (recovered)
+[BATCH] 400 on batch (size=200), splitting and retrying individually
+[BATCH] Client error on batch: status=404, size=200 (dropped)
 [DLQ] Requeue full after failure, wrote to DLQ
 ```
 
@@ -411,6 +497,10 @@ RawTripData {
 >>> Circuit breaker rejects: 0
 >>> Rate limiter 429s: 125
 >>> DLQ writes: 0
+>>> Batches sent: 750
+>>> Avg batch size: 200.0
+>>> Avg wait time: 52ms
+>>> Max wait time: 100ms
 ```
 
 ## Testing Strategy

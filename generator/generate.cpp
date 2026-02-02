@@ -108,6 +108,118 @@ struct PayloadWithRetry {
     }
 };
 
+// Batching: Accumulates events until size threshold or timeout
+class BatchAccumulator {
+private:
+    std::vector<PayloadWithRetry> batch_;
+    std::chrono::steady_clock::time_point first_event_time_;
+    size_t max_batch_size_;
+    std::chrono::microseconds timeout_us_;
+    bool has_events_ = false;
+
+public:
+    BatchAccumulator(size_t max_size, std::chrono::microseconds timeout)
+        : max_batch_size_(max_size), timeout_us_(timeout) {
+        batch_.reserve(max_size);
+    }
+
+    // Returns true if batch is ready to send
+    bool should_flush() const {
+        if (!has_events_) return false;
+        if (batch_.size() >= max_batch_size_) return true;
+
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            now - first_event_time_
+        );
+        return elapsed >= timeout_us_;
+    }
+
+    void add(PayloadWithRetry&& item) {
+        if (!has_events_) {
+            first_event_time_ = std::chrono::steady_clock::now();
+            has_events_ = true;
+        }
+        batch_.push_back(std::move(item));
+    }
+
+    std::vector<PayloadWithRetry> take_batch() {
+        auto result = std::move(batch_);
+        batch_.clear();
+        batch_.reserve(max_batch_size_);
+        has_events_ = false;
+        return result;
+    }
+
+    size_t size() const { return batch_.size(); }
+    bool empty() const { return !has_events_ || batch_.empty(); }
+
+    int64_t get_wait_time_us() const {
+        if (!has_events_) return 0;
+        auto now = std::chrono::steady_clock::now();
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            now - first_event_time_
+        ).count();
+    }
+};
+
+// Lock-free metrics for batching performance monitoring
+class BatchMetrics {
+private:
+    std::atomic<int64_t> total_events_batched_{0};
+    std::atomic<int64_t> total_batches_sent_{0};
+    std::atomic<int64_t> total_wait_time_us_{0};
+    std::atomic<int64_t> max_wait_time_us_{0};
+
+    static constexpr size_t WINDOW_SIZE = 1000;
+    std::array<std::atomic<int64_t>, WINDOW_SIZE> wait_times_;
+    std::atomic<size_t> write_index_{0};
+
+public:
+    BatchMetrics() {
+        for (auto& slot : wait_times_) {
+            slot.store(0, std::memory_order_relaxed);
+        }
+    }
+
+    void record_batch(int size, int64_t wait_us) {
+        total_events_batched_.fetch_add(size, std::memory_order_relaxed);
+        total_batches_sent_.fetch_add(1, std::memory_order_relaxed);
+        total_wait_time_us_.fetch_add(wait_us, std::memory_order_relaxed);
+
+        // Update max wait time using CAS loop
+        int64_t current_max = max_wait_time_us_.load(std::memory_order_acquire);
+        while (wait_us > current_max) {
+            if (max_wait_time_us_.compare_exchange_weak(current_max, wait_us)) {
+                break;
+            }
+        }
+
+        size_t idx = write_index_.fetch_add(1, std::memory_order_relaxed) % WINDOW_SIZE;
+        wait_times_[idx].store(wait_us, std::memory_order_relaxed);
+    }
+
+    int64_t get_avg_wait_time_us() const {
+        int64_t total = total_wait_time_us_.load(std::memory_order_relaxed);
+        int64_t count = total_batches_sent_.load(std::memory_order_relaxed);
+        return count > 0 ? total / count : 0;
+    }
+
+    int64_t get_max_wait_time_us() const {
+        return max_wait_time_us_.load(std::memory_order_relaxed);
+    }
+
+    double get_avg_batch_size() const {
+        int64_t events = total_events_batched_.load(std::memory_order_relaxed);
+        int64_t batches = total_batches_sent_.load(std::memory_order_relaxed);
+        return batches > 0 ? static_cast<double>(events) / batches : 0.0;
+    }
+
+    int64_t get_total_batches() const {
+        return total_batches_sent_.load(std::memory_order_relaxed);
+    }
+};
+
 struct DateRange {
     int start_year;
     int start_month;
@@ -137,6 +249,10 @@ struct SimulationConfig {
     // Retry & DLQ config
     size_t max_retries = 3;
     string dlq_filepath = "dead_letter_queue.jsonl";
+
+    // Batching config
+    size_t batch_size = 200;
+    int64_t batch_timeout_ms = 100;
 };
 
 static string trim_copy(const string& value) {
@@ -234,6 +350,10 @@ static SimulationConfig load_config(const string& path) {
             try { config.max_retries = stoull(value); } catch (...) {}
         } else if (key == "dlq_filepath") {
             if (!value.empty()) config.dlq_filepath = value;
+        } else if (key == "batch_size") {
+            try { config.batch_size = stoull(value); } catch (...) {}
+        } else if (key == "batch_timeout_ms") {
+            try { config.batch_timeout_ms = stoll(value); } catch (...) {}
         }
     }
 
@@ -907,6 +1027,34 @@ static bool http_post_json(const HttpEndpoint&, const string&, int& out_status_c
 }
 #endif
 
+// Batch version of http_post_json: sends array of events to /ingest/batch
+static bool http_post_json_batch(const HttpEndpoint& endpoint,
+                                  const std::vector<PayloadWithRetry>& batch,
+                                  int& out_status_code,
+                                  size_t max_failures) {
+    if (batch.empty()) {
+        out_status_code = 200;
+        return true;
+    }
+
+    // Build JSON array: "[{event1},{event2},...,{eventN}]"
+    std::ostringstream json_array;
+    json_array << "[";
+    for (size_t i = 0; i < batch.size(); ++i) {
+        if (i > 0) json_array << ",";
+        json_array << batch[i].payload;
+    }
+    json_array << "]";
+
+    std::string payload = json_array.str();
+
+    // Modify endpoint to use /ingest/batch
+    HttpEndpoint batch_endpoint = endpoint;
+    batch_endpoint.path = "/ingest/batch";
+
+    return http_post_json(batch_endpoint, payload, out_status_code, max_failures);
+}
+
 
 // ==========================================
 // 2. Helper Services (GPS)
@@ -1093,6 +1241,11 @@ private:
     size_t max_retries;
     string dlq_filepath;
 
+    // Batching configuration and metrics
+    size_t batch_size;
+    int64_t batch_timeout_ms;
+    BatchMetrics batch_metrics;
+
 public:
     UberSimulator(const SimulationConfig& config)
         : playback_speed(config.playback_speed),
@@ -1105,7 +1258,9 @@ public:
           circuit_breaker_timeout_sec(config.circuit_breaker_timeout_sec),
           connection_max_failures(config.connection_max_failures),
           max_retries(config.max_retries),
-          dlq_filepath(config.dlq_filepath) {
+          dlq_filepath(config.dlq_filepath),
+          batch_size(config.batch_size),
+          batch_timeout_ms(config.batch_timeout_ms) {
         ingestion_endpoint_ok = parse_http_url(ingestion_url, ingestion_endpoint);
         if (!ingestion_endpoint_ok) {
             lock_guard<mutex> lock(log_mu);
@@ -1179,7 +1334,11 @@ public:
                      << "429_rate=" << fixed << setprecision(2) << rate_limiter.get_429_rate()*100 << "%, "
                      << "circuit_state=" << cb_state_str << ", "
                      << "total_429s=" << rate_limiter.get_total_429s() << ", "
-                     << "dlq_writes=" << dlq.get_total_written() << endl;
+                     << "dlq_writes=" << dlq.get_total_written() << ", "
+                     << "batches_sent=" << batch_metrics.get_total_batches() << ", "
+                     << "avg_batch_size=" << fixed << setprecision(1) << batch_metrics.get_avg_batch_size() << ", "
+                     << "avg_wait_ms=" << batch_metrics.get_avg_wait_time_us()/1000 << ", "
+                     << "max_wait_ms=" << batch_metrics.get_max_wait_time_us()/1000 << endl;
             }
         });
         cout << "[DEBUG] Metrics thread started" << endl;
@@ -1200,25 +1359,48 @@ public:
             cout << "[DEBUG] Creating sender thread " << i << endl;
             senders.emplace_back([this, i, &payload_queue, &requeue, &rate_limiter, &circuit_breaker, &dlq]() {
                 if (i == 0) {
-                    cout << "[DEBUG] Sender thread 0 started, entering loop" << endl;
+                    cout << "[DEBUG] Sender thread 0 started with batching (size=" << batch_size
+                         << ", timeout=" << batch_timeout_ms << "ms)" << endl;
                 }
+
+                // Thread-local batch accumulator
+                BatchAccumulator accumulator(batch_size, std::chrono::microseconds(batch_timeout_ms * 1000));
                 PayloadWithRetry item;
-
                 size_t processed_count = 0;
-                while (true) {
-                    // Check both queues, but prioritize payload_queue for throughput
-                    // (requeue is typically empty under normal conditions)
 
+                while (true) {
+                    // Check if we should flush existing batch (timeout or size)
+                    if (accumulator.should_flush()) {
+                        auto batch = accumulator.take_batch();
+                        int64_t wait_time_us = accumulator.get_wait_time_us();
+                        if (i == 0 && processed_count < 5) {
+                            cout << "[DEBUG] Sender 0: Flushing batch (size=" << batch.size()
+                                 << ", wait=" << wait_time_us/1000 << "ms)" << endl;
+                        }
+                        post_batch_payload(batch, rate_limiter, circuit_breaker, requeue,
+                                         dlq, connection_max_failures, batch_metrics, wait_time_us);
+                        processed_count++;
+                    }
+
+                    // Try to get new event from payload_queue
                     if (i == 0 && processed_count == 0) {
                         cout << "[DEBUG] Sender 0: About to pop from payload_queue..." << endl;
                     }
-                    // Priority 1: New events from payload_queue
                     bool got_new = payload_queue.pop(item);
-                    if (i == 0 && processed_count == 0) {
-                        cout << "[DEBUG] Sender 0: Payload_queue pop returned " << (got_new ? "true" : "false") << endl;
-                    }
+
                     if (!got_new) {
-                        // payload_queue is closed, check if requeue has anything left
+                        // Payload queue closed - flush any remaining batch
+                        if (!accumulator.empty()) {
+                            auto batch = accumulator.take_batch();
+                            int64_t wait_time_us = accumulator.get_wait_time_us();
+                            if (i == 0) {
+                                cout << "[DEBUG] Sender 0: Flushing final batch (size=" << batch.size() << ")" << endl;
+                            }
+                            post_batch_payload(batch, rate_limiter, circuit_breaker, requeue,
+                                             dlq, connection_max_failures, batch_metrics, wait_time_us);
+                        }
+
+                        // Check requeue for any remaining items
                         if (i == 0) {
                             cout << "[DEBUG] Sender 0: payload_queue closed, checking requeue..." << endl;
                         }
@@ -1229,21 +1411,34 @@ public:
                             }
                             break;  // Both queues closed
                         }
+
+                        // Requeue items bypass batching (already failed once, don't delay further)
                         if (i == 0) {
-                            cout << "[DEBUG] Sender 0: Got item from requeue, calling post_payload..." << endl;
+                            cout << "[DEBUG] Sender 0: Got item from requeue, sending individually..." << endl;
                         }
                         post_payload(item, rate_limiter, circuit_breaker, requeue, dlq, connection_max_failures);
-                        processed_count++;
                         continue;
                     }
 
+                    // Add to batch
                     if (i == 0 && processed_count == 0) {
-                        cout << "[DEBUG] Sender 0: Got item from payload_queue, calling post_payload..." << endl;
+                        cout << "[DEBUG] Sender 0: Got item from payload_queue, adding to batch..." << endl;
                     }
-                    post_payload(item, rate_limiter, circuit_breaker, requeue, dlq, connection_max_failures);
-                    processed_count++;
-                    if (i == 0 && processed_count == 1) {
-                        cout << "[DEBUG] Sender 0: First post_payload completed!" << endl;
+                    accumulator.add(std::move(item));
+
+                    // Immediately flush if batch is full
+                    if (accumulator.should_flush()) {
+                        auto batch = accumulator.take_batch();
+                        int64_t wait_time_us = accumulator.get_wait_time_us();
+                        if (i == 0 && processed_count == 0) {
+                            cout << "[DEBUG] Sender 0: First batch ready (size=" << batch.size() << "), sending..." << endl;
+                        }
+                        post_batch_payload(batch, rate_limiter, circuit_breaker, requeue,
+                                         dlq, connection_max_failures, batch_metrics, wait_time_us);
+                        processed_count++;
+                        if (i == 0 && processed_count == 1) {
+                            cout << "[DEBUG] Sender 0: First batch completed!" << endl;
+                        }
                     }
                 }
             });
@@ -1279,6 +1474,11 @@ public:
         cout << ">>> Circuit breaker rejects: " << circuit_breaker.get_total_rejects() << endl;
         cout << ">>> Rate limiter 429s: " << rate_limiter.get_total_429s() << endl;
         cout << ">>> DLQ writes: " << dlq.get_total_written() << endl;
+        cout << ">>> Batches sent: " << batch_metrics.get_total_batches() << endl;
+        cout << ">>> Avg batch size: " << fixed << setprecision(1)
+             << batch_metrics.get_avg_batch_size() << endl;
+        cout << ">>> Avg wait time: " << batch_metrics.get_avg_wait_time_us()/1000 << "ms" << endl;
+        cout << ">>> Max wait time: " << batch_metrics.get_max_wait_time_us()/1000 << "ms" << endl;
     }
 
 private:
@@ -1318,7 +1518,7 @@ private:
             SimulationEvent ev = event_queue.top();
 
             if (processed == 0) {
-                cout << "[DEBUG] First event time: " << ev.event_time_us << endl;
+                cout << "[DEBUG] First event time: " << format_timestamp(ev.event_time_us) << endl;
             }
 
             // Calculate current simulation time
@@ -1328,7 +1528,8 @@ private:
             int64_t current_sim_ts = sim_start_ts + sim_elapsed_us;
 
             if (processed == 0) {
-                cout << "[DEBUG] current_sim_ts: " << current_sim_ts << ", ev.event_time_us: " << ev.event_time_us << endl;
+                cout << "[DEBUG] current_sim_ts: " << format_timestamp(current_sim_ts)
+                     << ", ev.event_time_us: " << format_timestamp(ev.event_time_us) << endl;
                 cout << "[DEBUG] Comparison: " << (current_sim_ts >= ev.event_time_us ? "READY" : "WAITING") << endl;
             }
 
@@ -1532,6 +1733,97 @@ private:
                 lock_guard<mutex> lock(log_mu);
                 cerr << "[NET] Client error (dropped): status=" << status_code << endl;
             }
+        }
+    }
+
+    // Batch version: sends multiple events in a single request
+    void post_batch_payload(std::vector<PayloadWithRetry>& batch,
+                           RateLimiter& rate_limiter,
+                           CircuitBreaker& circuit_breaker,
+                           BoundedQueue<PayloadWithRetry>& requeue,
+                           DeadLetterQueue& dlq,
+                           size_t max_failures,
+                           BatchMetrics& batch_metrics,
+                           int64_t wait_time_us) {
+        if (batch.empty()) return;
+
+        // 1. Check circuit breaker
+        if (!circuit_breaker.allow_request()) {
+            // Circuit open - requeue all events individually
+            for (auto& item : batch) {
+                if (item.can_retry()) {
+                    item.increment_retry();
+                    if (!requeue.push(std::move(item))) {
+                        dlq.write(item.payload, item.retry_count);
+                    }
+                } else {
+                    dlq.write(item.payload, item.retry_count);
+                }
+            }
+            return;
+        }
+
+        // 2. Apply rate limiting delay (once per batch)
+        int64_t delay_us = rate_limiter.get_delay_us();
+        if (delay_us > 0) {
+            this_thread::sleep_for(microseconds(delay_us));
+        }
+
+        // 3. Send batch request (or log if no endpoint)
+        if (!ingestion_endpoint_ok) {
+            // Stdout fallback - print each event
+            for (const auto& item : batch) {
+                cout << "[NET] " << item.payload << endl;
+            }
+            rate_limiter.record_response(200);
+            circuit_breaker.record_result(200);
+            batch_metrics.record_batch(batch.size(), wait_time_us);
+            return;
+        }
+
+        int status_code = 0;
+        bool success = http_post_json_batch(ingestion_endpoint, batch,
+                                            status_code, max_failures);
+
+        // 4. Record metrics
+        rate_limiter.record_response(status_code);
+        circuit_breaker.record_result(status_code);
+
+        if (success) {
+            batch_metrics.record_batch(batch.size(), wait_time_us);
+            return;
+        }
+
+        // 5. Handle batch failure
+        if (status_code == 400) {
+            // Bad request - likely one bad event in batch
+            // Split and retry individually to isolate bad event
+            lock_guard<mutex> lock(log_mu);
+            cerr << "[BATCH] 400 on batch (size=" << batch.size()
+                 << "), splitting and retrying individually" << endl;
+
+            for (auto& item : batch) {
+                // Retry as individual event using existing post_payload
+                post_payload(item, rate_limiter, circuit_breaker, requeue,
+                           dlq, max_failures);
+            }
+        } else if (status_code == 429 || status_code >= 500 || status_code == 0) {
+            // Retryable error - requeue all events individually
+            for (auto& item : batch) {
+                if (item.can_retry()) {
+                    item.increment_retry();
+                    if (!requeue.push(std::move(item))) {
+                        dlq.write(item.payload, item.retry_count);
+                    }
+                } else {
+                    dlq.write(item.payload, item.retry_count);
+                }
+            }
+        } else {
+            // Other client errors (401, 403, 404, etc.) - drop all
+            lock_guard<mutex> lock(log_mu);
+            cerr << "[BATCH] Client error on batch: status=" << status_code
+                 << ", size=" << batch.size() << " (dropped)" << endl;
         }
     }
 };

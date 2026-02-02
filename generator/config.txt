@@ -21,3 +21,7 @@ connection_max_failures=3
 # Retry and DLQ
 max_retries=3
 dlq_filepath=dead_letter_queue.jsonl
+
+# Batching configuration
+batch_size=200
+batch_timeout_ms=100
