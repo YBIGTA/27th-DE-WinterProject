@@ -16,11 +16,17 @@
         "format.class": "io.confluent.connect.s3.format.json.JsonFormat",
         "schema.compatibility": "NONE",
         "partitioner.class": "io.confluent.connect.storage.partitioner.TimeBasedPartitioner",
+        "transforms": "createTimestamp",
+        "transforms.createTimestamp.type": "org.apache.kafka.connect.transforms.TimestampConverter$Value",
+        "transforms.createTimestamp.target.type": "unix",
+        "transforms.createTimestamp.field": "ts",
+        "transforms.createTimestamp.format": "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "timestamp.extractor": "RecordField",
+        "timestamp.field": "ts",
         "path.format": "'year'=YYYY/'month'=MM/'day'=dd",
         "partition.duration.ms": "86400000",
         "locale": "ko_KR",
         "timezone": "Asia/Seoul",
-        "timestamp.extractor": "Wallclock",
         "aws.access.key.id": "YOUR_ACCESS_KEY_HERE",
         "aws.secret.access.key": "YOUR_SECRET_KEY_HERE"
     }
