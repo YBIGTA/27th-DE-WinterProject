@@ -1,0 +1,33 @@
+{
+    "name": "s3-sink-connector",
+    "config": {
+        "connector.class": "io.confluent.connect.s3.S3SinkConnector",
+        "tasks.max": "1",
+        "topics": "taxi-event-data",
+        "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": "false",
+        "value.converter.schemas.enable": "false",
+        "s3.region": "ap-northeast-2",
+        "s3.bucket.name": "nyc-taxi-raw-2026-ybigta-de",
+        "s3.part.size": "5242880",
+        "flush.size": "3",
+        "storage.class": "io.confluent.connect.s3.storage.S3Storage",
+        "format.class": "io.confluent.connect.s3.format.json.JsonFormat",
+        "schema.compatibility": "NONE",
+        "partitioner.class": "io.confluent.connect.storage.partitioner.TimeBasedPartitioner",
+        "transforms": "createTimestamp",
+        "transforms.createTimestamp.type": "org.apache.kafka.connect.transforms.TimestampConverter$Value",
+        "transforms.createTimestamp.target.type": "unix",
+        "transforms.createTimestamp.field": "ts",
+        "transforms.createTimestamp.format": "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "timestamp.extractor": "RecordField",
+        "timestamp.field": "ts",
+        "path.format": "'year'=YYYY/'month'=MM/'day'=dd",
+        "partition.duration.ms": "86400000",
+        "locale": "ko_KR",
+        "timezone": "Asia/Seoul",
+        "aws.access.key.id": "YOUR_ACCESS_KEY_HERE",
+        "aws.secret.access.key": "YOUR_SECRET_KEY_HERE"
+    }
+}

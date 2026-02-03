@@ -1,0 +1,4 @@
+# (connectors/.gitignore 파일)
+
+# 같은 폴더에 있으니 파일 이름만 적습니다
+s3-sink-config.json
