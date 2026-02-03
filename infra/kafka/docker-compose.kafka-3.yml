@@ -4,6 +4,8 @@ services:
   kafka-3:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-3
+    env_file:
+      - ../../config/.env
     ports:
       - "9095:9095"
       - "29094:29092"
