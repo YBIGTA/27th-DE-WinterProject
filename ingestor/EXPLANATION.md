@@ -48,7 +48,7 @@ flowchart TD
 - **Shared State:**
   - `Sinks.Many<TaxiEvent>` — the single multicast buffer (capacity 10,000). Multiple HTTP request threads can emit into it concurrently.
   - `AtomicLong` x5 (`eventsReceived`, `eventsProcessed`, `eventsFailed`, `eventsDropped`, `batchesSent`) — lock-free metric counters.
-  - `KafkaSender` — singleton bean with a lazy connection; connects on the first `send()` call.
+  - `KafkaSender` — singleton bean with a lazy connection; connects on the first `send()` call. Reactor-level `maxInFlight(1024)` caps the number of `SenderRecord`s in flight at the sender level; this is separate from the Kafka producer's `max.in.flight.requests.per.connection=5` which caps TCP-level requests per broker connection.
 - **Sync Primitives:**
   - `Sinks.EmitFailureHandler` — retries only on `FAIL_NON_SERIALIZED` (concurrent emit collision) via a busy-loop. All other failures are not retried.
   - `AtomicLong` — CAS-based lock-free increment for counters.
@@ -84,13 +84,40 @@ flowchart TD
 
 ## Data Contract
 - **Input:**
-  - `POST /ingest` — body: a single `TaxiEvent` JSON object.
-  - `POST /ingest/batch` — body: a JSON array of `TaxiEvent` objects.
+  - `POST /ingest` — body: a single `TaxiEvent` JSON object (see schema below).
+  - `POST /ingest/batch` — body: a JSON array of `TaxiEvent` objects. An empty or `null` array returns HTTP 400.
   - `GET /health` — no parameters.
 - **Output:**
   - Kafka topic `taxi-event-data` — key: `tripId` (String), value: `TaxiEvent` JSON. Partition assignment is determined by key hashing.
-  - HTTP responses: 202 (accepted), 429 (buffer full), 207 (partial batch success), 500 (other failures).
+  - HTTP responses: 202 (accepted), 429 (buffer full), 207 (partial batch success), 400 (empty batch), 500 (other failures).
   - `/ingest/batch` response body: `{ acceptedCount, rejectedCount, failedIndices[] }`.
+    - **Note:** On overflow mid-batch, `rejectedCount` includes both the failed event and all *unprocessed* events after it, but `failedIndices` only contains indices that were actually attempted. The unprocessed tail is not listed in `failedIndices`.
+- **TaxiEvent Schema:**
+  Three event types share a single DTO. Fields not applicable to an event type are serialized as `null`.
+
+  | Field (JSON key) | Type | Applicable to |
+  |------------------|------|---------------|
+  | `event` | String | ALL — `PICKUP`, `IN_TRANSIT`, or `DROPOFF` |
+  | `trip_id` | Long | ALL — used as Kafka message key |
+  | `ts` | String | ALL — ISO 8601 timestamp |
+  | `lat` | Double | ALL — current latitude |
+  | `lon` | Double | ALL — current longitude |
+  | `PULocationID` | Long | PICKUP, DROPOFF |
+  | `DOLocationID` | Long | PICKUP, DROPOFF |
+  | `VendorID` | Long | PICKUP, DROPOFF |
+  | `passenger_count` | Long | PICKUP, DROPOFF |
+  | `RatecodeID` | Long | PICKUP, DROPOFF |
+  | `payment_type` | Long | PICKUP, DROPOFF |
+  | `extra` | Double | PICKUP, DROPOFF |
+  | `mta_tax` | Double | PICKUP, DROPOFF |
+  | `tip_amount` | Double | PICKUP, DROPOFF |
+  | `tolls_amount` | Double | PICKUP, DROPOFF |
+  | `improvement_surcharge` | Double | PICKUP, DROPOFF |
+  | `congestion_surcharge` | Double | PICKUP, DROPOFF |
+  | `Airport_fee` | Double | PICKUP, DROPOFF |
+  | `fare_amount` | Double | DROPOFF |
+  | `total_amount` | Double | DROPOFF |
+  | `trip_distance` | Double | DROPOFF |
 - **Invariants:**
   - `tripId` is always present and used as the Kafka message key — events with the same `tripId` are guaranteed to land on the same partition.
   - When the buffer exceeds 10,000 events, new events are dropped and the client receives 429. No internal retry for overflow.
@@ -108,6 +135,7 @@ flowchart TD
 | Nginx `least_conn` | Distributes load based on each instance's actual current connection count | Nginx must maintain per-upstream connection state (vs. stateless round-robin) |
 | 3-instance cluster | Horizontally scales both buffer capacity and Kafka send throughput beyond a single instance | Each instance holds an independent Sink, so event ordering by `tripId` is not guaranteed at the cluster level |
 | `stopOnError(false)` on KafkaSender | A single event's serialization or send failure does not terminate the entire pipeline | Failed events can be silently skipped |
+| Kafka producer config in `ReactorKafkaConfig` (not `application.yml`) | `KafkaSender` is built programmatically; `spring.kafka.producer.*` in `application.yml` is **not** read by the Reactor Kafka sender | Editing producer settings in `application.yml` has no effect — changes must be made in `ReactorKafkaConfig.java` |
 
 ## Failure Modes & Handling
 | Failure | Detection | Response |
