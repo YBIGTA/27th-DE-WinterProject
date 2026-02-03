@@ -5,10 +5,6 @@ last_reviewed: 2026-02-03
 core_files:
   - config/.env.single-machine
   - config/.env.distributed
-  - config/.env.example
-  - config/use-env.sh
-  - config/start-single-machine.sh
-  - config/deploy-distributed.sh
   - generator/generate.cpp (load_env_file)
   - ingestor/docker-compose.yml
   - ingestor/docker-compose.ingestor-{1,2,3}.yml
@@ -24,11 +20,15 @@ Enable two fundamentally different deployment topologies (single-machine vs 5-ma
 
 ## I/O Flow
 ```
-[Template Selection] --(File Copy)--> [Active .env] --(Parse)--> [Runtime Components]
-                                                                  ├─ Generator (C++ setenv)
-                                                                  ├─ Ingestors (Docker env_file)
-                                                                  ├─ Kafka (Docker env_file)
-                                                                  └─ Nginx (Docker env_file)
+[config/.env.single-machine OR config/.env.distributed]
+                    |
+                    | manual cp → config/.env
+                    ↓
+             [config/.env] --(Parse)--> [Runtime Components]
+                                        ├─ Generator (C++ setenv)
+                                        ├─ Ingestors (Docker env_file)
+                                        ├─ Kafka (Docker env_file)
+                                        └─ Nginx (Docker env_file)
 ```
 
 ## Implementation Logic
@@ -36,21 +36,17 @@ Enable two fundamentally different deployment topologies (single-machine vs 5-ma
 ### Data Flow
 ```mermaid
 flowchart TD
-    A[User runs use-env.sh] --> B{Version?}
-    B -->|single-machine| C[Copy .env.single-machine → .env]
-    B -->|distributed| D[Copy .env.distributed → .env]
+    A[".env.single-machine (local)"] --> C["cp → config/.env"]
+    B[".env.distributed (example)"] --> C
 
-    C --> E[.env file on disk]
-    D --> E
-
-    E --> F[Generator reads ../.env]
-    E --> G[Docker Compose reads env_file]
+    C --> F[Generator reads ../config/.env]
+    C --> G[Docker Compose reads env_file]
 
     F --> H[load_env_file parses]
     H --> I[setenv injects to process]
     I --> J[getenv INGEST_URL at runtime]
 
-    G --> K[Docker substitutes ${VAR}]
+    G --> K["Docker substitutes ${VAR}"]
     K --> L[Container env vars]
     L --> M[Spring Boot reads SPRING_KAFKA_BOOTSTRAP_SERVERS]
 ```
@@ -66,17 +62,19 @@ flowchart TD
 
 ### Core Algorithm
 
-#### 1. Template Switching (use-env.sh)
+#### 1. Template Copy (manual)
 ```bash
-SOURCE_FILE=".env.${VERSION}"  # .env.single-machine OR .env.distributed
-TARGET_FILE=".env"
-cp "$SOURCE_FILE" "$TARGET_FILE"
+# Local pipeline
+cp config/.env.single-machine .env
+
+# Distributed pipeline (edit IPs first, see .env.distributed as reference)
+cp config/.env.distributed .env
 ```
-**Atomicity:** Uses cp (atomic overwrite on Linux)
+**Note:** `.env.distributed` is a reference example only. The actual distributed env with real IPs is managed per-environment and must not be committed.
 
 #### 2. Generator Parsing (generate.cpp:294-321)
 ```cpp
-load_env_file("../.env");  // Relative to generator/build/
+load_env_file("../config/.env");  // Relative to generator/ CWD
   ↓ For each line:
   ↓   Skip if empty or starts with '#'
   ↓   Parse KEY=VALUE
@@ -92,12 +90,12 @@ Key usage:
 ```yaml
 services:
   ingestor-1:
-    env_file: ../.env
+    env_file: ../config/.env
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${SPRING_KAFKA_BOOTSTRAP_SERVERS}
 ```
 **Mechanism:**
-1. Docker reads `../.env` before container start
+1. Docker reads `../config/.env` before container start
 2. Substitutes `${VAR}` placeholders in `environment:` section
 3. Passes final values as container environment variables
 
@@ -142,7 +140,7 @@ KEY_LIST=server1:9092,server2:9092  # Application parses
 | Decision | Why | Trade-off |
 |----------|-----|-----------|
 | **File-based templates** (vs centralized config server) | Zero dependencies, works offline, version controlled | Manual propagation to 5 machines in V2 |
-| **Explicit copy** (vs symlinks) | Works across OS (Windows/Linux), no dangling symlinks | Must remember to run `use-env.sh` |
+| **Manual cp** (vs symlinks or scripts) | Simple, no tooling to maintain, works across OS | Must remember to copy before starting services |
 | **Separate compose files** for V2 (vs overrides) | Clear separation, no conditional logic, deploy per-machine | More files to maintain (5 docker-compose files) |
 | **C++ native parser** (vs libdotenv) | No external dependency, 30 LOC | Custom implementation, no advanced features (variable expansion) |
 | **env_file + environment** (vs only env_file) | Explicit variable mapping, validation via Docker | Redundancy, must list variables twice |
@@ -208,37 +206,36 @@ KEY_LIST=server1:9092,server2:9092  # Application parses
 
 | Failure | Detection | Response | Recovery |
 |---------|-----------|----------|----------|
-| **Missing .env file** | Generator: Silent fallback to defaults<br>Docker: Container fails to start | Generator uses hardcoded `http://localhost:8080`<br>Docker shows env var substitution error | Run `use-env.sh` before deployment |
-| **Wrong IPs in V2** | Connection timeout (Generator→Nginx, Ingestor→Kafka) | HTTP 503 / Kafka connection errors in logs | Edit `.env.distributed` + `nginx.distributed.conf`, redeploy |
-| **Port conflict in V1** | Docker bind error: "port already in use" | Container fails to start | Change `*_PORT` variables in `.env.single-machine` |
-| **Stale .env after switching** | Services connect to wrong endpoints | Data goes to old Kafka, events lost | Always run `use-env.sh` before starting services |
-| **Forgot to copy .env to all machines (V2)** | Each machine reads different config | Ingestors point to wrong Kafka, inconsistent state | `scp .env` to all 5 machines |
+| **Missing .env file** | Generator: Silent fallback to defaults<br>Docker: Container fails to start | Generator uses hardcoded `http://localhost:8080`<br>Docker shows env var substitution error | `cp config/.env.single-machine config/.env` before deployment |
+| **Wrong IPs in V2** | Connection timeout (Generator→Nginx, Ingestor→Kafka) | HTTP 503 / Kafka connection errors in logs | Edit `config/.env` with correct IPs + `nginx.distributed.conf`, redeploy |
+| **Port conflict in V1** | Docker bind error: "port already in use" | Container fails to start | Change `*_PORT` variables in `config/.env` |
+| **Stale .env after switching** | Services connect to wrong endpoints | Data goes to old Kafka, events lost | Re-copy the correct template to `config/.env` before starting services |
+| **Forgot to copy .env to all machines (V2)** | Each machine reads different config | Ingestors point to wrong Kafka, inconsistent state | `scp config/.env` to all 5 machines |
 | **Nginx can't resolve DNS (V2)** | `nginx: [emerg] host not found in upstream` | Nginx container fails to start | Use IPs not hostnames in `nginx.distributed.conf` |
 
 ## Operational Procedures
 
 ### Switching Environments
 ```bash
-# Development on single machine
-./config/use-env.sh single-machine
-./config/start-single-machine.sh
+# Local pipeline
+cp config/.env.single-machine config/.env
 
-# Production distributed setup
-./config/use-env.sh distributed
-# Edit config/.env.distributed and nginx.distributed.conf first!
-# Then deploy per-machine (see config/deploy-distributed.sh)
+# Distributed pipeline
+# 1. Use .env.distributed as reference, edit config/.env with actual IPs
+# 2. Edit ingestor/nginx.distributed.conf with actual upstream IPs
+cp config/.env.distributed config/.env   # then edit config/.env with real IPs
 ```
 
 ### Verifying Active Configuration
 ```bash
 # Check which template is active
-head -1 .env  # Shows "VERSION 1" or "VERSION 2" comment
+head -1 config/.env  # Shows "VERSION 1" or "VERSION 2" comment
 
 # Verify Generator will use correct URL
-grep INGEST_URL .env
+grep INGEST_URL config/.env
 
 # Verify Ingestors will connect to correct Kafka
-grep SPRING_KAFKA_BOOTSTRAP_SERVERS .env
+grep SPRING_KAFKA_BOOTSTRAP_SERVERS config/.env
 
 # Test config without deploying
 docker compose -f ingestor/docker-compose.yml config | grep SPRING_KAFKA
@@ -260,12 +257,13 @@ docker exec ingestor-lb nginx -T | grep upstream
 ```
 
 ## Security Considerations
-1. **No secrets in .env files** - These are version controlled
+1. **Do not expose `.env.distributed`** - It is a reference example only. The actual distributed env with real IPs must not be committed or shared publicly.
+2. **No secrets in .env files** - These are version controlled
    - If needed: Use `.env.local` (gitignored) for secrets, source after `.env`
-2. **Network exposure:**
+3. **Network exposure:**
    - V1: Only localhost ports exposed
    - V2: All services exposed on 0.0.0.0 - use firewall rules
-3. **File permissions:** `.env` is world-readable (needed by Docker)
+4. **File permissions:** `.env` is world-readable (needed by Docker)
    - Sensitive configs should use Docker secrets or external secret managers
 
 ## Future Improvements

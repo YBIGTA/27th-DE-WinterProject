@@ -5,7 +5,7 @@ services:
     image: nginx:alpine
     container_name: ingestor-lb
     env_file:
-      - ../.env
+      - ../config/.env
     ports:
       - "${NGINX_LB_PORT:-8080}:80"
     volumes:

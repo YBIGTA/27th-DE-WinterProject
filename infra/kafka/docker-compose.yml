@@ -5,7 +5,7 @@ services:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
     env_file:
-      - ../../.env
+      - ../../config/.env
     ports:
       - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
       - "${KAFKA_CONTROLLER_PORT:-9093}:9093"
@@ -53,7 +53,7 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     env_file:
-      - ../../.env
+      - ../../config/.env
     depends_on:
       kafka:
         condition: service_healthy

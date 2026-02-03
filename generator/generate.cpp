@@ -322,7 +322,7 @@ static void load_env_file(const string& env_file_path) {
 
 static SimulationConfig load_config(const string& path) {
     // Load .env file first
-    load_env_file("../.env");
+    load_env_file("../config/.env");
 
     SimulationConfig config;
     ifstream file(path);
