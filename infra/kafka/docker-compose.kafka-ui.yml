@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "kafka-cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+    networks:
+      - kafka_kafka-network
+    restart: unless-stopped
+
+networks:
+ kafka_kafka-network:
+    driver: bridge
+    external: true
