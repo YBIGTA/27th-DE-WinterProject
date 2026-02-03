@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  ingestor-3:
+    build: .
+    container_name: ingestor-3
+    env_file:
+      - ../.env
+    ports:
+      - "${INGESTOR_3_PORT:-8080}:${INGESTOR_PORT:-8080}"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${SPRING_KAFKA_BOOTSTRAP_SERVERS}
+      APP_KAFKA_TOPIC: ${APP_KAFKA_TOPIC}
+      SERVER_PORT: ${INGESTOR_PORT:-8080}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

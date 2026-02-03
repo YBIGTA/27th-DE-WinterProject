@@ -56,3 +56,13 @@ Thumbs.db
 
 # Java bytecode
 *.class
+
+# Environment files
+.env
+.env.local
+.env.docker
+
+# Keep template files
+!config/.env.single-machine
+!config/.env.distributed
+!config/.env.example

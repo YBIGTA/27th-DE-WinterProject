@@ -291,7 +291,39 @@ static bool parse_year_month_value(const string& value, int& year, int& month) {
     return true;
 }
 
+static void load_env_file(const string& env_file_path) {
+    ifstream file(env_file_path);
+    if (!file.is_open()) return; // .env file is optional
+
+    string line;
+    while (getline(file, line)) {
+        string trimmed = trim_copy(line);
+        if (trimmed.empty() || trimmed[0] == '#') continue;
+
+        size_t eq = trimmed.find('=');
+        if (eq == string::npos) continue;
+
+        string key = trim_copy(trimmed.substr(0, eq));
+        string value = trim_copy(trimmed.substr(eq + 1));
+
+        // Remove quotes
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        }
+
+        // Set env var (only if not already set)
+        #ifdef _WIN32
+            _putenv_s(key.c_str(), value.c_str());
+        #else
+            setenv(key.c_str(), value.c_str(), 0);
+        #endif
+    }
+}
+
 static SimulationConfig load_config(const string& path) {
+    // Load .env file first
+    load_env_file("../.env");
+
     SimulationConfig config;
     ifstream file(path);
     if (!file.is_open()) {
