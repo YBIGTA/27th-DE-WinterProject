@@ -7,6 +7,18 @@
    docker compose up -d
    ```
 
+## Real Quick Start
+
+**All services at once**  
+sudo docker compose up                                                                                                     
+                                                                                                                                
+**Individual — use these exact service names from docker-compose.yml**
+
+sudo docker compose up ingestor-1                                                                                          
+sudo docker compose up ingestor-2                                                                                          
+sudo docker compose up ingestor-3                                                                                          
+sudo docker compose up nginx-lb
+
 ## Quick Start (Docker Cluster)
 
 ### 1. Start Ingestor Cluster (3 instances + Nginx LB)

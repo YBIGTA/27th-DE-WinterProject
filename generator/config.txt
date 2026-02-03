@@ -2,5 +2,26 @@
 # YYYY-MM format for date range
 start=2020-01
 end=2020-02
-playback_speed=50
+playback_speed=300
 ingestion_url=http://localhost:8080/ingest
+debug_timing=false
+
+# Rate limiting configuration
+rate_limit_threshold=0.10
+rate_limit_max_delay_ms=5000
+
+# Circuit breaker configuration
+circuit_breaker_threshold=0.50
+circuit_breaker_min_requests=20
+circuit_breaker_timeout_sec=30
+
+# Connection management
+connection_max_failures=3
+
+# Retry and DLQ
+max_retries=3
+dlq_filepath=dead_letter_queue.jsonl
+
+# Batching configuration
+batch_size=200
+batch_timeout_ms=100
