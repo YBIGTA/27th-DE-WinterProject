@@ -1,58 +1,42 @@
 ## Prerequisites
 
-1. **Java 17+**
-   ```bash
-   java --version
-   ```
-   I recommend JDK 21
-
+1. **Docker & Docker Compose**
 2. **Kafka Running** (via Docker)
    ```bash
-   cd ../infra/kafka
-   docker-compose up -d
+   cd ../kafka
+   docker compose up -d
    ```
 
-3. **Generator Built**
-   You can skip if you are just trying to see if the pipeline works
-   But when you run this generator you might encounter many issue ^^
+## Real Quick Start
 
-   ```bash
-   cd ../generator
-   # Build if not already done
-   cmake -S . -B build \
-  -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
-  -DCMAKE_BUILD_TYPE=Release
+**All services at once**  
+sudo docker compose up                                                                                                     
+                                                                                                                                
+**Individual — use these exact service names from docker-compose.yml**
 
-   cmake --build build
-   ```
+sudo docker compose up ingestor-1                                                                                          
+sudo docker compose up ingestor-2                                                                                          
+sudo docker compose up ingestor-3                                                                                          
+sudo docker compose up nginx-lb
 
-## Quick Start
+## Quick Start (Docker Cluster)
 
-### 1. Build the Ingestor
+### 1. Start Ingestor Cluster (3 instances + Nginx LB)
 
 ```bash
 cd ingestor
-./gradlew clean build
+docker compose up -d --build
 ```
 
-Expected output: `BUILD SUCCESSFUL`
+This starts:
 
-OR TRY THIS
+- `ingestor-1`, `ingestor-2`, `ingestor-3` (port 8081-8083)
+- `nginx-lb` (port 8080) - load balancer
 
-gradle clean build
-
-### 2. Start the Ingestor
+### 2. Check Status
 
 ```bash
-./gradlew bootRun
-```
-OR TRY
-
-gradle bootRun
-
-**Expected startup log:**
-```
-[STARTUP] Initializing ingestion pipeline: buffer=10000, batch=500, timeout=50ms, topic=taxi-event-data
+docker compose ps
 ```
 
 ### 3. Run the Generator
@@ -62,7 +46,34 @@ cd ../generator
 ./build/generate
 ```
 
-The generator will start sending taxi events to the ingestor.
+### 4. Monitor Logs
+
+```bash
+docker compose logs -f ingestor-1 ingestor-2 ingestor-3
+```
+
+### 5. Stop Cluster
+
+```bash
+docker compose down
+```
+
+## Local Development (Without Docker)
+
+Requires Java 17+ and Gradle.
+
+### Build & Run
+
+```bash
+./gradlew clean build
+./gradlew bootRun
+```
+
+**Expected startup log:**
+
+```text
+[STARTUP] Initializing ingestion pipeline: buffer=10000, batch=500, timeout=50ms, topic=taxi-event-data
+```
 
 ## Testing Scenarios
 

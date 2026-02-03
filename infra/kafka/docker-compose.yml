@@ -4,9 +4,11 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
+    env_file:
+      - ../../config/.env
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
+      - "${KAFKA_CONTROLLER_PORT:-9093}:9093"
     environment:
       # KRaft mode configuration (no Zookeeper!)
       KAFKA_NODE_ID: 1
@@ -15,8 +17,8 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
       # Dual listeners: EXTERNAL for host machine, INTERNAL for docker network
-      KAFKA_LISTENERS: EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,INTERNAL://0.0.0.0:29092
-      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENERS: EXTERNAL://0.0.0.0:${KAFKA_EXTERNAL_PORT:-9092},CONTROLLER://0.0.0.0:${KAFKA_CONTROLLER_PORT:-9093},INTERNAL://0.0.0.0:${KAFKA_INTERNAL_PORT:-29092}
+      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-EXTERNAL://localhost:9092,INTERNAL://kafka:29092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
 
@@ -50,14 +52,16 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    env_file:
+      - ../../config/.env
     depends_on:
       kafka:
         condition: service_healthy
     ports:
-      - "8090:8080"
+      - "${KAFKA_UI_PORT:-8090}:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_UI_BOOTSTRAP_SERVERS:-kafka:29092}
       DYNAMIC_CONFIG_ENABLED: 'true'
     networks:
       - kafka-network
