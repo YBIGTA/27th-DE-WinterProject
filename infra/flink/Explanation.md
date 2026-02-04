@@ -3,9 +3,9 @@ component: Flink Processor (TaxiRealtimeJob)
 status: CURRENT
 last_reviewed: 2026-02-03
 core_files:
-  - jobs/flink-job/src/main/java/com/example/TaxiRealtimeJob.java
-  - jobs/flink-job/src/main/java/com/example/TaxiEvent.java
-  - jobs/flink-job/src/main/java/com/example/SpatialJoinFunction.java
+  - services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java
+  - services/flink-job/src/main/java/com/example/TaxiEvent.java
+  - services/flink-job/src/main/java/com/example/SpatialJoinFunction.java
 ---
 
 # Flink Processor

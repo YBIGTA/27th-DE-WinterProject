@@ -10,10 +10,15 @@ Kafka로부터 유입되는 원시 데이터를 정제하여 OLAP 시스템(Clic
 .
 ├── infra/
 │   └── flink/
-│       ├── docker-compose.yml       # Kafka, Flink, ClickHouse 인프라 설정
 │       ├── Explanation.md           # Flink 프로세서 기술 명세서 (V13.1)
 │       └── README.md                # 인프라 가이드
-├── jobs/
+├── ops/
+│   └── compose/
+│       ├── single-machine/
+│       │   └── flink.yml            # 로컬 실행용 Flink compose
+│       └── distributed/
+│           └── flink.yml            # 분산 실행용 Flink compose
+├── services/
 │   └── flink-job/                   # Flink 애플리케이션 모듈
 │       ├── src/main/java/com/example/
 │       │   ├── TaxiRealtimeJob.java    # 메인 파이프라인 로직
@@ -21,13 +26,13 @@ Kafka로부터 유입되는 원시 데이터를 정제하여 OLAP 시스템(Clic
 │       │   └── SpatialJoinFunction.java # 위경도-ZoneID 매핑 함수
 │       ├── src/main/resources/         # 매핑용 CSV 데이터
 │       └── pom.xml                     # Maven 빌드 및 의존성 설정
-├── ingestor/                        # 데이터 생성 및 Kafka 인입 모듈
+├── services/ingestor/               # 데이터 생성 및 Kafka 인입 모듈
 └── README.md                        # 프로젝트 메인 가이드
 ```
 
 ## 🛠 의존성 (Dependencies)
 
-`jobs/flink-job/pom.xml`에 정의된 핵심 의존성 라이브러리 목록입니다.
+`services/flink-job/pom.xml`에 정의된 핵심 의존성 라이브러리 목록입니다.
 
 * **Runtime**: Java 11, Apache Flink 1.18
 * **Libraries**:
@@ -42,8 +47,7 @@ Kafka로부터 유입되는 원시 데이터를 정제하여 OLAP 시스템(Clic
 * **Maven 설치**: [Apache Maven Download](https://maven.apache.org/download.cgi)에서 설치 후 `mvn -version`으로 확인하세요.
 * **인프라 가동**:
   ```bash
-  cd infra/flink
-  docker-compose up -d
+  docker compose -f ops/compose/single-machine/flink.yml up -d
   ```
 
 ### 2. 참조 데이터(CSV) 주입 (최초 1회)
@@ -54,14 +58,14 @@ Kafka로부터 유입되는 원시 데이터를 정제하여 OLAP 시스템(Clic
 docker exec flink-taskmanager mkdir -p /opt/flink/resources
 
 # 로컬의 CSV 파일을 컨테이너 내부로 복사
-docker cp jobs/flink-job/src/main/resources/taxi_zone_median_coords.csv flink-taskmanager:/opt/flink/resources/
+docker cp services/flink-job/src/main/resources/taxi_zone_median_coords.csv flink-taskmanager:/opt/flink/resources/
 ```
 
 ### 3. 빌드 및 Job 실행
 
 ```bash
 # 1) Maven 빌드
-cd jobs/flink-job
+cd services/flink-job
 mvn clean package
 
 # 2) JAR 파일 복사

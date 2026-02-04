@@ -6,12 +6,12 @@
 - **Docker + Docker Compose**
 
 ## Compose 파일
-- `infra/clickhouse/docker-compose.yml`
+- `ops/compose/single-machine/clickhouse.yml`
+- `ops/compose/distributed/clickhouse.yml`
 
 ## Quick start (commands used)
 ```bash
-cd infra/clickhouse
-docker compose up -d
+docker compose -f ops/compose/single-machine/clickhouse.yml up -d
 ```
 
 ### Health check
@@ -33,5 +33,5 @@ Expected: `Ok`
 
 ## Stop
 ```bash
-docker compose down
+docker compose -f ops/compose/single-machine/clickhouse.yml down
 ```

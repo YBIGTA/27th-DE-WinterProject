@@ -14,12 +14,14 @@ Focus on moving directories and updating paths without changing configuration se
 1. Move modules and compose files into the new `services/`, `infra/`, and `ops/` layout.
 2. Update docs and scripts to point to new locations.
 3. Keep existing env usage and config files as-is to avoid behavior changes.
+4. Keep existing `infra/**/docker-compose*.yml` as-is for running environments; copy their entrypoints into `ops/compose/...` for the refactor.
 
 ### Phase 2: Config Consolidation (Next)
 Introduce a clearer config model after structure is stable.
 1. Define per-component config locations and conventions.
 2. Decide which values stay in env vs. component config files.
 3. Update compose and docs to use the new config conventions.
+4. Establish `ops` as the only place for compose entrypoints; `infra` keeps component configs/scripts/images, not run commands.
 
 ## Target Structure
 ```text
@@ -57,21 +59,29 @@ Introduce a clearer config model after structure is stable.
 | `preprocess/` | `services/preprocess/` |
 | `jobs/flink-job/` | `services/flink-job/` |
 | `connectors/` | `infra/connectors/` |
-| `infra/kafka/docker-compose*.yml` | `ops/compose/single-machine/` or `ops/compose/distributed/` |
-| `infra/clickhouse/docker-compose.yml` | `ops/compose/single-machine/` and `ops/compose/distributed/` |
-| `infra/flink/docker-compose*.yml` | `ops/compose/single-machine/` or `ops/compose/distributed/` |
-| `ingestor/docker-compose*.yml` | `ops/compose/single-machine/` or `ops/compose/distributed/` |
-| `ingestor/nginx*.conf` | `ops/compose/distributed/` |
+| `infra/kafka/docker-compose.yml` | `ops/compose/single-machine/kafka.yml` |
+| `infra/kafka/docker-compose.kafka-ui.yml` | `ops/compose/single-machine/kafka-ui.yml` and `ops/compose/distributed/kafka-ui.yml` |
+| `infra/kafka/docker-compose.kafka-{1,2,3}.yml` | `ops/compose/distributed/kafka-{1,2,3}.yml` |
+| `infra/clickhouse/docker-compose.yml` | `ops/compose/single-machine/clickhouse.yml` and `ops/compose/distributed/clickhouse.yml` |
+| `infra/flink/docker-compose.yml` | `ops/compose/single-machine/flink.yml` |
+| `infra/flink/docker-compose.flink.yml` | `ops/compose/distributed/flink.yml` |
+| `ingestor/docker-compose.yml` | `ops/compose/single-machine/ingestor.yml` |
+| `ingestor/docker-compose.ingestor-{1,2,3}.yml` | `ops/compose/distributed/ingestor-{1,2,3}.yml` |
+| `ingestor/docker-compose.nginx.yml` | `ops/compose/single-machine/ingestor-nginx.yml` and `ops/compose/distributed/ingestor-nginx.yml` |
+| `ingestor/nginx.conf` | `ops/compose/single-machine/nginx.conf` |
+| `ingestor/nginx.distributed.conf` | `ops/compose/distributed/nginx.distributed.conf` |
 
 Notes on compose placement:
 1. Place single-machine compose files under `ops/compose/single-machine/`.
 2. Place multi-machine or per-node compose files under `ops/compose/distributed/`.
 3. Keep `infra/` for vendor or cluster-specific definitions that are not “how to run” entrypoints.
+4. Rename compose files to avoid filename collisions in shared folders (e.g., `kafka.yml`, `clickhouse.yml`, `ingestor.yml`).
 
 Decision notes:
 1. `single-machine` exists for local end-to-end pipeline testing on one instance.
 2. `distributed` exists for multi-instance deployment and per-node definitions.
 3. Duplicate compose content between the two is acceptable given the different goals.
+4. During Phase 1, duplication between `infra` and `ops` is acceptable; Phase 2 removes `infra` compose entrypoints.
 
 ## Migration Steps
 1. Create new directories: `services/`, `ops/compose/single-machine/`, `ops/compose/distributed/`, `ops/scripts/`.

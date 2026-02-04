@@ -10,15 +10,24 @@ Simulating Data pipeline equivalent to Uber
 │   └── outputs
 │       ├── preprocessed
 │       └── raw
+├── config
+├── infra
+├── ops
+│   └── compose
+│       ├── single-machine
+│       └── distributed
 ├── data
 │   ├── taxi_data
 │   ├── taxi_data_preprocessed
 │   └── taxi_zones
 │       ├── shapeFiles
 │       └── zoneInfo
-├── generator
-├── ingestor
-└── preprocess
+├── services
+│   ├── generator
+│   ├── ingestor
+│   ├── preprocess
+│   └── flink-job
+└── REFACTORING.md
 
 ```
 

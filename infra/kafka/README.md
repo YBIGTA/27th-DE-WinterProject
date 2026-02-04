@@ -5,12 +5,15 @@
 각 브로커를 독립적인 docker-compose 파일로 관리합니다.
 
 ```
-kafka/
-├── docker-compose.kafka-1.yml  (Broker 1)
-├── docker-compose.kafka-2.yml  (Broker 2)
-├── docker-compose.kafka-3.yml  (Broker 3)
-├── docker-compose.kafka-ui.yml (UI)
-└── docker-compose.yml          (통합 파일 - 옵션)
+ops/compose/
+├── single-machine/
+│   ├── kafka.yml               (통합 파일 - 옵션)
+│   └── kafka-ui.yml            (UI)
+└── distributed/
+    ├── kafka-1.yml             (Broker 1)
+    ├── kafka-2.yml             (Broker 2)
+    ├── kafka-3.yml             (Broker 3)
+    └── kafka-ui.yml            (UI)
 ```
 
 ## 실행 방법
@@ -22,22 +25,22 @@ docker network create kafka-network
 
 ### 2. 브로커 시작
 ```bash
-cd infra/kafka
+cd ops/compose/distributed
 
 docker compose \
-  -f docker-compose.kafka-1.yml \
-  -f docker-compose.kafka-2.yml \
-  -f docker-compose.kafka-3.yml \
-  -f docker-compose.kafka-ui.yml \
+  -f kafka-1.yml \
+  -f kafka-2.yml \
+  -f kafka-3.yml \
+  -f kafka-ui.yml \
   up -d
 ```
 
 ### 3. 상태 확인
 ```bash
-docker compose -f docker-compose.kafka-1.yml ps
-docker compose -f docker-compose.kafka-2.yml ps
-docker compose -f docker-compose.kafka-3.yml ps
-docker compose -f docker-compose.kafka-ui.yml ps
+docker compose -f kafka-1.yml ps
+docker compose -f kafka-2.yml ps
+docker compose -f kafka-3.yml ps
+docker compose -f kafka-ui.yml ps
 ```
 
 또는:
@@ -65,10 +68,10 @@ docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --describe --
 ```bash
 # 모두 종료
 docker compose \
-  -f docker-compose.kafka-1.yml \
-  -f docker-compose.kafka-2.yml \
-  -f docker-compose.kafka-3.yml \
-  -f docker-compose.kafka-ui.yml \
+  -f kafka-1.yml \
+  -f kafka-2.yml \
+  -f kafka-3.yml \
+  -f kafka-ui.yml \
   down -v
 
 # 네트워크 제거
@@ -81,13 +84,13 @@ docker network rm kafka-network
 
 ```bash
 # Broker 1만 재시작
-docker compose -f docker-compose.kafka-1.yml restart
+docker compose -f kafka-1.yml restart
 
 # Broker 2만 로그 확인
-docker compose -f docker-compose.kafka-2.yml logs -f
+docker compose -f kafka-2.yml logs -f
 
 # Broker 3만 제거
-docker compose -f docker-compose.kafka-3.yml down
+docker compose -f kafka-3.yml down
 ```
 
 ## 아키텍처

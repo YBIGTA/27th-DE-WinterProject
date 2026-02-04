@@ -6,17 +6,17 @@ pipeline: generator → nginx → ingestor → kafka → (s3 sink connector → 
 core_files:
   - config/.env.single-machine
   - config/.env.distributed
-  - generator/generate.cpp (load_env_file)
-  - ingestor/docker-compose.yml
-  - ingestor/docker-compose.ingestor-{1,2,3}.yml
-  - ingestor/docker-compose.nginx.yml
-  - ingestor/nginx.distributed.conf
-  - infra/kafka/docker-compose.yml
-  - infra/kafka/docker-compose.kafka-{1,2,3}.yml
-  - infra/clickhouse/docker-compose.yml
-  - infra/flink/docker-compose.yml
-  - infra/flink/docker-compose.flink.yml
-  - connectors/s3-sink-config.template.json
+  - services/generator/generate.cpp (load_env_file)
+  - ops/compose/single-machine/ingestor.yml
+  - ops/compose/distributed/ingestor-{1,2,3}.yml
+  - ops/compose/distributed/ingestor-nginx.yml
+  - ops/compose/distributed/nginx.distributed.conf
+  - ops/compose/single-machine/kafka.yml
+  - ops/compose/distributed/kafka-{1,2,3}.yml
+  - ops/compose/single-machine/clickhouse.yml
+  - ops/compose/single-machine/flink.yml
+  - ops/compose/distributed/flink.yml
+  - infra/connectors/s3-sink-config.template.json
 ---
 
 # Environment-Based Deployment Configuration System
@@ -54,7 +54,7 @@ flowchart TD
     A[".env.single-machine (local)"] --> C["cp → config/.env"]
     B[".env.distributed (multi-machine)"] --> C
 
-    C --> F[Generator reads ../config/.env]
+    C --> F[Generator reads ../../config/.env]
     C --> G[Docker Compose reads env_file]
 
     F --> H[load_env_file parses]
@@ -93,12 +93,12 @@ cp config/.env.single-machine config/.env
 
 # Distributed pipeline
 cp config/.env.distributed config/.env
-# Then: edit IPs in Instance Registry + derived vars + nginx.distributed.conf
+# Then: edit IPs in Instance Registry + derived vars + ops/compose/distributed/nginx.distributed.conf
 ```
 
 #### 2. Generator Parsing (generate.cpp:294-321)
 ```cpp
-load_env_file("../config/.env");  // Relative to generator/ CWD
+load_env_file("../../config/.env");  // Relative to services/generator CWD
   ↓ For each line:
   ↓   Skip if empty or starts with '#'
   ↓   Parse KEY=VALUE
@@ -114,12 +114,12 @@ Key usage:
 ```yaml
 services:
   ingestor-1:
-    env_file: ../config/.env
+    env_file: ../../../config/.env
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${SPRING_KAFKA_BOOTSTRAP_SERVERS}
 ```
 **Mechanism:**
-1. Docker reads `../config/.env` before container start
+1. Docker reads `../../../config/.env` before container start
 2. Substitutes `${VAR}` placeholders in `environment:` section
 3. Passes final values as container environment variables
 
@@ -145,7 +145,7 @@ KEY_LIST=server1:9092,server2:9092   # Application parses the list
 ### Instance Registry (distributed only)
 The top section of `.env.distributed` is the single source of truth for IPs. Per-component docker-compose files derive their connection strings from these IPs automatically via Docker Compose `${VAR}` substitution in their `environment:` blocks. Update an IP in the registry and it flows through to all components that reference it — no manual editing of derived values needed.
 
-**Exception:** `ingestor/nginx.distributed.conf` must still be manually edited — Nginx cannot read env vars in `upstream` blocks.
+**Exception:** `ops/compose/distributed/nginx.distributed.conf` must still be manually edited — Nginx cannot read env vars in `upstream` blocks.
 
 ```
 GENERATOR_IP    → Machine A (co-located with Nginx)
@@ -184,15 +184,15 @@ CLICKHOUSE_IP   → Machine I
 | Variable | V1 (local) | V2 (distributed) | Consumer |
 |----------|------------|-------------------|----------|
 | `APP_KAFKA_TOPIC` | `taxi-event-data` | `taxi-event-data` | Ingestors (env_file passthrough) |
-| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `kafka-1:29092,...` | derived in docker-compose.ingestor-*.yml from `${KAFKA_*_IP}` | Ingestors |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `kafka-1:29092,...` | derived in ops/compose/distributed/ingestor-*.yml from `${KAFKA_*_IP}` | Ingestors |
 | `KAFKA_BOOTSTRAP_SERVERS_INTERNAL` | `kafka-1:29092,...` | — | Documentation (V1 only) |
 | `KAFKA_BOOTSTRAP_SERVERS_EXTERNAL` | `localhost:9092,9094,9096` | — | S3 connector (AWS) reference (V1 only) |
 | `KAFKA_INTERNAL_PORT` | `29092` | `29092` | Kafka compose |
 | `KAFKA_CONTROLLER_PORT` | `19093` | `19093` | Kafka compose |
-| `KAFKA_ADVERTISED_LISTENERS` | — | derived in docker-compose.kafka-{1,2,3}.yml from `${KAFKA_N_IP}` | Per-broker kafka compose |
-| `KAFKA_CONTROLLER_QUORUM_VOTERS` | — | derived in docker-compose.kafka-{1,2,3}.yml from `${KAFKA_*_IP}` | Per-broker kafka compose |
+| `KAFKA_ADVERTISED_LISTENERS` | — | derived in ops/compose/distributed/kafka-{1,2,3}.yml from `${KAFKA_N_IP}` | Per-broker kafka compose |
+| `KAFKA_CONTROLLER_QUORUM_VOTERS` | — | derived in ops/compose/distributed/kafka-{1,2,3}.yml from `${KAFKA_*_IP}` | Per-broker kafka compose |
 | `KAFKA_UI_PORT` | `8090` | `8090` | Kafka UI compose |
-| `KAFKA_UI_BOOTSTRAP_SERVERS` | `kafka-1:29092,...` | derived in docker-compose.kafka-ui.yml from `${KAFKA_*_IP}` | Kafka UI |
+| `KAFKA_UI_BOOTSTRAP_SERVERS` | `kafka-1:29092,...` | derived in ops/compose/distributed/kafka-ui.yml from `${KAFKA_*_IP}` | Kafka UI |
 
 #### ClickHouse
 | Variable | V1 (local) | V2 (distributed) | Consumer |
@@ -216,7 +216,7 @@ CLICKHOUSE_IP   → Machine I
 | `FLINK_TASKMANAGER_SLOTS` | `2` | `2` | Flink compose |
 
 #### S3 Sink Connector
-No env vars. Runs on AWS Kafka Connect. Subscribes to `taxi-event-data`. Config is in `connectors/s3-sink-config.template.json`. Its `bootstrap.servers` must point to the Kafka `EXTERNAL` listener IPs.
+No env vars. Runs on AWS Kafka Connect. Subscribes to `taxi-event-data`. Config is in `infra/connectors/s3-sink-config.template.json`. Its `bootstrap.servers` must point to the Kafka `EXTERNAL` listener IPs.
 
 ### Invariants
 1. **Network Reachability:**
@@ -368,7 +368,7 @@ cp config/.env.distributed config/.env
 # Then:
 #   1. Edit config/.env -- update IPs in the Instance Registry (top of file)
 #      Compose files derive connection strings automatically from these IPs.
-#   2. Edit ingestor/nginx.distributed.conf -- update upstream IPs manually
+#   2. Edit ops/compose/distributed/nginx.distributed.conf -- update upstream IPs manually
 #      (Nginx cannot read env vars in upstream blocks)
 #   3. scp config/.env to all 9 machines
 ```
@@ -391,13 +391,13 @@ grep taxi-event-data config/.env
 grep FLINK_CLICKHOUSE config/.env
 
 # Test config without deploying
-docker compose -f ingestor/docker-compose.yml config | grep SPRING_KAFKA
+docker compose -f ops/compose/single-machine/ingestor.yml config | grep SPRING_KAFKA
 ```
 
 ### Debugging Configuration Issues
 ```bash
 # Generator: Check what env vars it loaded
-./generator/build/generate  # Logs show config loading
+cd services/generator && ./build/generate  # Logs show config loading
 
 # Ingestor: Check env vars inside container
 docker exec ingestor-1 env | grep KAFKA

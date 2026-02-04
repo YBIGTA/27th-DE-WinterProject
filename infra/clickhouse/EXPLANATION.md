@@ -3,7 +3,8 @@ component: clickhouse-docker-compose
 status: CURRENT
 last_reviewed: 2026-02-02
 core_files:
-  - infra/clickhouse/docker-compose.yml
+  - ops/compose/single-machine/clickhouse.yml
+  - ops/compose/distributed/clickhouse.yml
   - infra/clickhouse/schema.sql
 ---
 
