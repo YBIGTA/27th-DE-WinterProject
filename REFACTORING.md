@@ -1,110 +1,72 @@
 # Refactoring Plan (Ops-Centric Layout)
 
-This document captures the intended refactor from the current layout to an ops-centric layout, including the target structure, a safe move plan, and the files that will require path updates.
+이 문서는 구조 개편(Phase 1)과 설정 통합(Phase 2)의 상태를 요약한다.
+실행 방법의 최신 기준은 `config/README.md`다.
 
 ## Goals
-1. Separate runtime concerns from application code.
-2. Make deployment and operational procedures discoverable in one place.
-3. Preserve current behavior while only changing paths and references.
-4. Defer config restructuring until after the directory refactor is stable.
+1. 애플리케이션 코드(`services`)와 운영 진입점(`ops/compose`) 분리
+2. 인프라 런타임 설정을 `infra/*/config/default.yaml`로 일관화
+3. `config/.env`를 네트워크(IP/PORT) 전용으로 제한
 
-## Phased Approach
-### Phase 1: Structure-Only Refactor (Now)
-Focus on moving directories and updating paths without changing configuration semantics.
-1. Move modules and compose files into the new `services/`, `infra/`, and `ops/` layout.
-2. Update docs and scripts to point to new locations.
-3. Keep existing env usage and config files as-is to avoid behavior changes.
-4. Keep existing `infra/**/docker-compose*.yml` as-is for running environments; copy their entrypoints into `ops/compose/...` for the refactor.
+## Phase Status
+### Phase 1: Structure Refactor
+Status: `DONE`
 
-### Phase 2: Config Consolidation (Next)
-Introduce a clearer config model after structure is stable.
-1. Define per-component config locations and conventions.
-2. Decide which values stay in env vs. component config files.
-3. Update compose and docs to use the new config conventions.
-4. Establish `ops` as the only place for compose entrypoints; `infra` keeps component configs/scripts/images, not run commands.
+완료:
+- 디렉토리 재배치 (`services/`, `infra/`, `ops/compose/...`)
+- compose entrypoint를 `ops/compose/single-machine`, `ops/compose/distributed`로 통합
+- 경로/문서 업데이트
 
-## Target Structure
+### Phase 2: Config Consolidation
+Status: `DONE (implementation)`
+
+완료:
+- 컴포넌트별 YAML 기본 설정 추가
+- Kafka/ClickHouse/Nginx compose startup에서 YAML 파싱 후 runtime env 주입
+- Ingestor(Spring), Generator(C++), Flink(SnakeYAML) 설정 로딩 연결
+- distributed instance registry(IP 기반) 반영
+
+남은 운영 작업:
+- 환경별 실기동 smoke test 기록 정리
+- 경고 정리(`version:` obsolete) 여부 결정
+
+## Target Layout
 ```text
 .
 ├── services
 │   ├── ingestor
 │   ├── generator
-│   ├── preprocess
 │   └── flink-job
+├── preprocess
 ├── infra
 │   ├── kafka
 │   ├── clickhouse
 │   ├── flink
 │   ├── spark
+│   ├── nginx
 │   └── connectors
 ├── ops
-│   ├── compose
-│   │   ├── single-machine
-│   │   └── distributed
-│   └── scripts
-├── config
-│   ├── .env.single-machine
-│   ├── .env.distributed
-│   └── README.md
-├── data
-├── analysis
-└── README.md
+│   └── compose
+│       ├── single-machine
+│       └── distributed
+└── config
+    ├── .env.single-machine
+    ├── .env.distributed
+    └── README.md
 ```
 
-## Move Map
-| Current Path | New Path |
-| --- | --- |
-| `ingestor/` | `services/ingestor/` |
-| `generator/` | `services/generator/` |
-| `preprocess/` | `services/preprocess/` |
-| `jobs/flink-job/` | `services/flink-job/` |
-| `connectors/` | `infra/connectors/` |
-| `infra/kafka/docker-compose.yml` | `ops/compose/single-machine/kafka.yml` |
-| `infra/kafka/docker-compose.kafka-ui.yml` | `ops/compose/single-machine/kafka-ui.yml` and `ops/compose/distributed/kafka-ui.yml` |
-| `infra/kafka/docker-compose.kafka-{1,2,3}.yml` | `ops/compose/distributed/kafka-{1,2,3}.yml` |
-| `infra/clickhouse/docker-compose.yml` | `ops/compose/single-machine/clickhouse.yml` and `ops/compose/distributed/clickhouse.yml` |
-| `infra/flink/docker-compose.yml` | `ops/compose/single-machine/flink.yml` |
-| `infra/flink/docker-compose.flink.yml` | `ops/compose/distributed/flink.yml` |
-| `ingestor/docker-compose.yml` | `ops/compose/single-machine/ingestor.yml` |
-| `ingestor/docker-compose.ingestor-{1,2,3}.yml` | `ops/compose/distributed/ingestor-{1,2,3}.yml` |
-| `ingestor/docker-compose.nginx.yml` | `ops/compose/single-machine/ingestor-nginx.yml` and `ops/compose/distributed/ingestor-nginx.yml` |
-| `ingestor/nginx.conf` | `ops/compose/single-machine/nginx.conf` |
-| `ingestor/nginx.distributed.conf` | `ops/compose/distributed/nginx.distributed.conf` |
+## Compose 실행 규약
+프로젝트 루트 기준:
+```bash
+docker compose -f ops/compose/<mode>/docker-compose.yml --env-file config/.env up -d <service...>
+```
 
-Notes on compose placement:
-1. Place single-machine compose files under `ops/compose/single-machine/`.
-2. Place multi-machine or per-node compose files under `ops/compose/distributed/`.
-3. Keep `infra/` for vendor or cluster-specific definitions that are not “how to run” entrypoints.
-4. Rename compose files to avoid filename collisions in shared folders (e.g., `kafka.yml`, `clickhouse.yml`, `ingestor.yml`).
-
-Decision notes:
-1. `single-machine` exists for local end-to-end pipeline testing on one instance.
-2. `distributed` exists for multi-instance deployment and per-node definitions.
-3. Duplicate compose content between the two is acceptable given the different goals.
-4. During Phase 1, duplication between `infra` and `ops` is acceptable; Phase 2 removes `infra` compose entrypoints.
-
-## Migration Steps
-1. Create new directories: `services/`, `ops/compose/single-machine/`, `ops/compose/distributed/`, `ops/scripts/`.
-2. Move application modules into `services/` based on the Move Map.
-3. Move compose and ops files into `ops/compose/...` based on the Move Map.
-4. Update all path references in docs and scripts.
-5. Run compose from within `ops/compose/...` directories to preserve relative paths.
-6. If running from elsewhere, pass `--project-directory` and verify relative paths.
-7. Run a dry start for each mode (single-machine and distributed).
-
-## Files Likely Needing Updates
-1. `config/README.md` for compose file paths.
-2. `infra/flink/README.md` for paths to compose or resources.
-3. Root `README.md` for the directory tree.
-4. Any scripts or runbooks that reference old paths.
-5. Any compose `volumes:` or `build:` paths using relative references.
-
-## Non-Goals
-1. No changes to service logic or configuration values.
-2. No changes to Docker images or dependency versions.
+이 규약을 쓰는 이유:
+- distributed `${VAR}` 치환값을 compose 파싱 시점에 보장하기 위해
+- 실행 위치(cwd) 차이에 따른 상대경로 혼란을 줄이기 위해
 
 ## Validation Checklist
-1. `config/README.md` paths match new locations.
-2. `docker compose -f ... up -d` works for both modes.
-3. Flink job build and copy steps still point to the correct paths.
-4. Nginx upstream configuration uses correct IPs for distributed mode.
+1. `config/README.md`의 실행 커맨드대로 기동 가능
+2. `docker compose ... config`가 single/distributed 모두 통과
+3. Ingestor/Flink topic 값이 일치
+4. Flink ClickHouse target이 `infra/clickhouse/schema.sql`와 일치

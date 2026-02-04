@@ -4,7 +4,7 @@ status: CURRENT
 last_reviewed: 2026-02-02 (Updated: Batching implementation)
 core_files:
   - services/generator/generate.cpp
-  - services/generator/config.txt
+  - services/generator/config/default.yaml
   - services/generator/CMakeLists.txt
   - services/generator/conanfile.txt
 ---
@@ -593,8 +593,8 @@ cmake --build build
 cmake --build build
 
 # Run
-./build/generate  # Uses config.txt in current directory
-./build/generate custom_config.txt  # Custom config
+./build/generate  # Uses config/default.yaml in current directory
+./build/generate config/custom.yaml  # Custom config
 ```
 
 ## Future Enhancements

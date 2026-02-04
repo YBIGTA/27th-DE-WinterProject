@@ -1,5 +1,6 @@
 package com.ingestion.service;
 
+import com.ingestion.config.IngestorTuningProperties;
 import com.ingestion.dto.TaxiEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -27,14 +28,13 @@ public class IngestionService {
 
     private final KafkaSender<String, String> kafkaSender;
     private final ObjectMapper objectMapper;
+    private final IngestorTuningProperties tuning;
 
-    @Value("${app.kafka.topic}")
+    @Value("${app.kafka.topic:taxi-event-data}")
     private String topicName;
 
-    // Buffer: 10,000 events with FAIL_FAST backpressure
-    private final Sinks.Many<TaxiEvent> sink = Sinks.many()
-            .multicast()
-            .onBackpressureBuffer(10000, false);
+    private Sinks.Many<TaxiEvent> sink;
+    private int bufferSize;
 
     // Metrics for structured logging
     private final AtomicLong eventsReceived = new AtomicLong(0);
@@ -54,12 +54,24 @@ public class IngestionService {
 
     @PostConstruct
     public void init() {
-        log.info("[STARTUP] Initializing ingestion pipeline: buffer=10000, batch=500, timeout=50ms, topic={}", topicName);
+        bufferSize = tuning.getBuffer().getSize();
+        int batchSize = tuning.getBatch().getSize();
+        long batchTimeoutMs = tuning.getBatch().getTimeoutMs();
+        int sendConcurrency = tuning.getKafka().getSendConcurrency();
+        long metricsIntervalSec = tuning.getMetrics().getIntervalSec();
+
+        // Buffer: configured size with FAIL_FAST backpressure
+        sink = Sinks.many()
+            .multicast()
+            .onBackpressureBuffer(bufferSize, false);
+
+        log.info("[STARTUP] Initializing ingestion pipeline: buffer={}, batch={}, timeout={}ms, topic={}",
+                 bufferSize, batchSize, batchTimeoutMs, topicName);
 
         // Pipeline: Buffer → Batch → Parallel Kafka Send with Retry
         sink.asFlux()
-            .bufferTimeout(500, Duration.ofMillis(50))
-            .flatMap(this::sendBatchToKafkaReactive, 4)  // 4 concurrent Kafka sends
+            .bufferTimeout(batchSize, Duration.ofMillis(batchTimeoutMs))
+            .flatMap(this::sendBatchToKafkaReactive, sendConcurrency)
             .doOnError(e -> log.error("[PIPELINE] Critical error in pipeline", e))
             .retry()  // Retry the entire subscription if it fails
             .subscribe(
@@ -71,7 +83,7 @@ public class IngestionService {
             );
 
         // Log metrics every 10 seconds
-        Flux.interval(Duration.ofSeconds(10))
+        Flux.interval(Duration.ofSeconds(metricsIntervalSec))
             .doOnNext(tick -> logMetrics())
             .subscribe();
     }
@@ -194,10 +206,11 @@ public class IngestionService {
         long processed = eventsProcessed.get();
         long pending = received - processed;
 
-        if (pending >= 10000) return 100;
-        if (pending >= 8000) return 80;
-        if (pending >= 5000) return 50;
-        return (int) ((pending * 100) / 10000);
+        if (bufferSize <= 0) return 0;
+        if (pending >= bufferSize) return 100;
+        if (pending >= Math.round(bufferSize * 0.8)) return 80;
+        if (pending >= Math.round(bufferSize * 0.5)) return 50;
+        return (int) ((pending * 100) / bufferSize);
     }
 
     /**

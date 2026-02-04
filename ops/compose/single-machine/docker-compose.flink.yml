@@ -1,0 +1,53 @@
+version: "3.8"
+
+services:
+  flink-jobmanager:
+    image: flink:1.17.2-scala_2.12
+    container_name: flink-jobmanager
+    command: jobmanager
+    ports:
+      - "${FLINK_JOBMANAGER_PORT:-8081}:8081"
+    env_file:
+      - ../../../config/.env
+      - ../../../services/flink-job/config/runtime.env
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        parallelism.default: ${FLINK_PARALLELISM:-1}
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
+      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
+      - FLINK_CONFIG_PATH=/opt/flink/config/default.yaml
+    volumes:
+      - ../../../services/flink-job/config/default.yaml:/opt/flink/config/default.yaml:ro
+    networks:
+      - kafka-network
+
+  flink:
+    image: flink:1.17.2-scala_2.12
+    container_name: flink-taskmanager
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    env_file:
+      - ../../../config/.env
+      - ../../../services/flink-job/config/runtime.env
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: ${FLINK_TASKMANAGER_SLOTS:-2}
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
+      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
+      - FLINK_CONFIG_PATH=/opt/flink/config/default.yaml
+    volumes:
+      - ../../../services/flink-job/config/default.yaml:/opt/flink/config/default.yaml:ro
+    networks:
+      - kafka-network
+
+networks:
+  kafka-network:
+    external: true
+    name: kafka-network

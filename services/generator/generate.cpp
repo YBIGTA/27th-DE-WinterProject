@@ -15,6 +15,7 @@
 #include <thread>
 #include <chrono>
 #include <map>
+#include <unordered_map>
 #include <cmath>
 #include <algorithm>
 #include <sstream>
@@ -320,6 +321,131 @@ static void load_env_file(const string& env_file_path) {
     }
 }
 
+static string strip_quotes(const string& value) {
+    if (value.size() >= 2) {
+        if ((value.front() == '"' && value.back() == '"') ||
+            (value.front() == '\'' && value.back() == '\'')) {
+            return value.substr(1, value.size() - 2);
+        }
+    }
+    return value;
+}
+
+static bool ends_with(const string& value, const string& suffix) {
+    if (value.size() < suffix.size()) return false;
+    return equal(suffix.rbegin(), suffix.rend(), value.rbegin());
+}
+
+static unordered_map<string, string> load_yaml_kv(const string& path) {
+    unordered_map<string, string> kv;
+    ifstream file(path);
+    if (!file.is_open()) return kv;
+
+    vector<pair<int, string>> sections;
+    string line;
+    while (getline(file, line)) {
+        string trimmed = trim_copy(line);
+        if (trimmed.empty() || trimmed[0] == '#') continue;
+
+        int indent = 0;
+        for (char ch : line) {
+            if (ch == ' ') indent += 1;
+            else if (ch == '\t') indent += 2;
+            else break;
+        }
+
+        string content = trim_copy(line);
+        size_t colon = content.find(':');
+        if (colon == string::npos) continue;
+
+        string key = trim_copy(content.substr(0, colon));
+        string rest = trim_copy(content.substr(colon + 1));
+        if (key.empty()) continue;
+
+        while (!sections.empty() && indent <= sections.back().first) {
+            sections.pop_back();
+        }
+
+        if (rest.empty()) {
+            sections.push_back({indent, key});
+            continue;
+        }
+
+        string full_key;
+        for (size_t i = 0; i < sections.size(); i++) {
+            if (i > 0) full_key += ".";
+            full_key += sections[i].second;
+        }
+        if (!full_key.empty()) full_key += ".";
+        full_key += key;
+
+        string value = strip_quotes(rest);
+        kv[to_lower_copy(full_key)] = value;
+    }
+
+    return kv;
+}
+
+static void apply_config_value(SimulationConfig& config, const string& raw_key, const string& raw_value) {
+    string key = to_lower_copy(raw_key);
+    string value = strip_quotes(raw_value);
+
+    if (key == "playback_speed" || key == "playback.speed") {
+        try { config.playback_speed = stod(value); } catch (...) {}
+    } else if (key == "start" || key == "start_date" || key == "date_range.start") {
+        int year = 0, month = 0;
+        if (parse_year_month_value(value, year, month)) {
+            config.range.start_year = year;
+            config.range.start_month = month;
+        }
+    } else if (key == "end" || key == "end_date" || key == "date_range.end") {
+        int year = 0, month = 0;
+        if (parse_year_month_value(value, year, month)) {
+            config.range.end_year = year;
+            config.range.end_month = month;
+        }
+    } else if (key == "data_path" || key == "data.path") {
+        if (!value.empty()) config.data_path = value;
+    } else if (key == "ingestion_url" || key == "ingest_url") {
+        if (!value.empty()) config.ingestion_url = value;
+    } else if (key == "debug_timing") {
+        config.debug_timing = (value == "true" || value == "1");
+    } else if (key == "rate_limit_threshold" || key == "rate_limit.threshold") {
+        try { config.rate_limit_threshold = stod(value); } catch (...) {}
+    } else if (key == "rate_limit_max_delay_ms" || key == "rate_limit.max_delay_ms") {
+        try { config.rate_limit_max_delay_ms = stoll(value); } catch (...) {}
+    } else if (key == "circuit_breaker_threshold" || key == "circuit_breaker.threshold") {
+        try { config.circuit_breaker_threshold = stod(value); } catch (...) {}
+    } else if (key == "circuit_breaker_min_requests" || key == "circuit_breaker.min_requests") {
+        try { config.circuit_breaker_min_requests = stoull(value); } catch (...) {}
+    } else if (key == "circuit_breaker_timeout_sec" || key == "circuit_breaker.timeout_sec") {
+        try { config.circuit_breaker_timeout_sec = stoi(value); } catch (...) {}
+    } else if (key == "connection_max_failures" || key == "connection.max_failures") {
+        try { config.connection_max_failures = stoull(value); } catch (...) {}
+    } else if (key == "max_retries" || key == "retry.max_retries") {
+        try { config.max_retries = stoull(value); } catch (...) {}
+    } else if (key == "dlq_filepath" || key == "dlq.filepath") {
+        if (!value.empty()) config.dlq_filepath = value;
+    } else if (key == "batch_size" || key == "batch.size") {
+        try { config.batch_size = stoull(value); } catch (...) {}
+    } else if (key == "batch_timeout_ms" || key == "batch.timeout_ms") {
+        try { config.batch_timeout_ms = stoll(value); } catch (...) {}
+    }
+}
+
+static string resolve_ingestion_url_from_env() {
+    const char* env_url = getenv("INGEST_URL");
+    if (env_url && *env_url) return string(env_url);
+
+    const char* nginx_ip = getenv("NGINX_IP");
+    const char* lb_port = getenv("NGINX_LB_PORT");
+    if (nginx_ip && *nginx_ip && lb_port && *lb_port) {
+        return string("http://") + nginx_ip + ":" + lb_port + "/ingest";
+    }
+
+    return "";
+}
+
 static SimulationConfig load_config(const string& path) {
     // Load .env file first
     load_env_file("../../config/.env");
@@ -328,69 +454,32 @@ static SimulationConfig load_config(const string& path) {
     ifstream file(path);
     if (!file.is_open()) {
         cerr << "[Config] Using defaults (file not found: " << path << ")" << endl;
-        const char* env_url = getenv("INGEST_URL");
-        if (env_url && *env_url) config.ingestion_url = env_url;
+        string env_url = resolve_ingestion_url_from_env();
+        if (!env_url.empty()) config.ingestion_url = env_url;
         return config;
     }
 
-    string line;
-    while (getline(file, line)) {
-        string trimmed = trim_copy(line);
-        if (trimmed.empty() || trimmed[0] == '#') continue;
-        size_t eq = trimmed.find('=');
-        if (eq == string::npos) continue;
-
-        string key = to_lower_copy(trim_copy(trimmed.substr(0, eq)));
-        string value = trim_copy(trimmed.substr(eq + 1));
-        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
-            value = value.substr(1, value.size() - 2);
+    if (ends_with(path, ".yaml") || ends_with(path, ".yml")) {
+        auto kv = load_yaml_kv(path);
+        for (const auto& entry : kv) {
+            apply_config_value(config, entry.first, entry.second);
         }
+    } else {
+        string line;
+        while (getline(file, line)) {
+            string trimmed = trim_copy(line);
+            if (trimmed.empty() || trimmed[0] == '#') continue;
+            size_t eq = trimmed.find('=');
+            if (eq == string::npos) continue;
 
-        if (key == "playback_speed") {
-            try { config.playback_speed = stod(value); } catch (...) {}
-        } else if (key == "start" || key == "start_date") {
-            int year = 0, month = 0;
-            if (parse_year_month_value(value, year, month)) {
-                config.range.start_year = year;
-                config.range.start_month = month;
-            }
-        } else if (key == "end" || key == "end_date") {
-            int year = 0, month = 0;
-            if (parse_year_month_value(value, year, month)) {
-                config.range.end_year = year;
-                config.range.end_month = month;
-            }
-        } else if (key == "data_path") {
-            if (!value.empty()) config.data_path = value;
-        } else if (key == "ingestion_url" || key == "ingest_url") {
-            if (!value.empty()) config.ingestion_url = value;
-        } else if (key == "debug_timing") {
-            config.debug_timing = (value == "true" || value == "1");
-        } else if (key == "rate_limit_threshold") {
-            try { config.rate_limit_threshold = stod(value); } catch (...) {}
-        } else if (key == "rate_limit_max_delay_ms") {
-            try { config.rate_limit_max_delay_ms = stoll(value); } catch (...) {}
-        } else if (key == "circuit_breaker_threshold") {
-            try { config.circuit_breaker_threshold = stod(value); } catch (...) {}
-        } else if (key == "circuit_breaker_min_requests") {
-            try { config.circuit_breaker_min_requests = stoull(value); } catch (...) {}
-        } else if (key == "circuit_breaker_timeout_sec") {
-            try { config.circuit_breaker_timeout_sec = stoi(value); } catch (...) {}
-        } else if (key == "connection_max_failures") {
-            try { config.connection_max_failures = stoull(value); } catch (...) {}
-        } else if (key == "max_retries") {
-            try { config.max_retries = stoull(value); } catch (...) {}
-        } else if (key == "dlq_filepath") {
-            if (!value.empty()) config.dlq_filepath = value;
-        } else if (key == "batch_size") {
-            try { config.batch_size = stoull(value); } catch (...) {}
-        } else if (key == "batch_timeout_ms") {
-            try { config.batch_timeout_ms = stoll(value); } catch (...) {}
+            string key = trim_copy(trimmed.substr(0, eq));
+            string value = trim_copy(trimmed.substr(eq + 1));
+            apply_config_value(config, key, value);
         }
     }
 
-    const char* env_url = getenv("INGEST_URL");
-    if (env_url && *env_url) config.ingestion_url = env_url;
+    string env_url = resolve_ingestion_url_from_env();
+    if (!env_url.empty()) config.ingestion_url = env_url;
 
     return config;
 }
@@ -2283,7 +2372,7 @@ private:
 // ==========================================
 
 int main(int argc, char** argv) {
-    string config_path = "config.txt";
+    string config_path = "config/default.yaml";
     if (argc > 1) {
         config_path = argv[1];
     }

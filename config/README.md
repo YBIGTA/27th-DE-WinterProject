@@ -1,127 +1,106 @@
-# Config
+# Config Runbook (Phase 2)
 
-Two env templates for two deployment modes. Copy the right one to `config/.env` before starting services.
+이 문서는 현재 저장소의 **실행 기준 문서**입니다.
 
----
+## 핵심 규칙
+1. `config/.env`는 네트워크(IP/PORT)만 가진다.
+2. non-network 값(topic, table, tuning)은 컴포넌트 YAML에서 관리한다.
+3. Compose 실행은 항상 `--env-file config/.env`를 같이 쓴다.
 
-## 1. Local (single machine)
+## Source of Truth
+| Layer | File(s) | Contains |
+|---|---|---|
+| Network | `config/.env.single-machine`, `config/.env.distributed`, `config/.env` | IP/PORT only |
+| Ingestor app | `services/ingestor/config/default.yaml` | topic + tuning |
+| Generator app | `services/generator/config/default.yaml` | ingestion fallback + tuning |
+| Flink app | `services/flink-job/config/default.yaml` | topic + ClickHouse target + tuning |
+| Kafka infra | `infra/kafka/config/default.yaml` | broker runtime tuning |
+| ClickHouse infra | `infra/clickhouse/config/default.yaml` | runtime tuning |
+| Nginx infra | `infra/nginx/config/default.yaml` | upstream/proxy tuning |
 
-All components run in Docker on one machine. Order matters — each layer depends on the one before it.
+## 왜 `--env-file`이 필요한가
+분산 compose는 `${KAFKA_1_IP}` 같은 변수를 compose 파싱 시점에 치환합니다.
+서비스의 `env_file:`만으로는 이 치환이 보장되지 않으므로, 실행 커맨드에 `--env-file config/.env`를 명시해야 합니다.
 
-### Startup order (recommended)
-If you start out of order, services may fail to connect at boot and require a restart.
-1. Kafka
-2. ClickHouse
-3. Ingestors
-4. Nginx
-5. Flink
-6. Generator
-7. Kafka UI (optional, anytime after Kafka)
+## Standard Command Pattern
+모든 실행은 프로젝트 루트에서 아래 패턴 사용:
 
 ```bash
-# 0. Activate local config
+docker compose -f ops/compose/<mode>/docker-compose.yml --env-file config/.env up -d <service...>
+```
+
+- `<mode>`: `single-machine` 또는 `distributed`
+
+## 1) Single-machine
+
+```bash
+# 0. 템플릿 활성화
 cp config/.env.single-machine config/.env
 
-# 1. Kafka (3-broker KRaft cluster)
-docker compose -f ops/compose/single-machine/kafka.yml up -d
+# 1. Kafka
+
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3
 
 # 2. ClickHouse
-docker compose -f ops/compose/single-machine/clickhouse.yml up -d
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d clickhouse
 
-# 3. Kafka UI  (optional, anytime after Kafka is up)
-docker compose -f ops/compose/single-machine/kafka-ui.yml up -d
+# 3. Ingestor + Nginx
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3 nginx-lb
 
-# 4. Ingestors + Nginx load balancer
-docker compose -f ops/compose/single-machine/ingestor.yml up -d
-docker compose -f ops/compose/single-machine/ingestor-nginx.yml up -d
+# 4. Flink
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d flink-jobmanager flink
 
-# 5. Flink (JobManager + TaskManager)
-docker compose -f ops/compose/single-machine/flink.yml up -d
+# 5. Kafka UI (optional)
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d kafka-ui
 
-# 6. Generator  (native binary, not Docker)
+# 6. Generator (native)
 cd services/generator && ./build/generate
 ```
 
----
-
-## 2. Distributed (multi-machine)
-
-Each component runs on a separate machine. All machines must have the **same** `config/.env`.
-
-### Startup order (recommended)
-If you start out of order, services may fail to connect at boot and require a restart.
-1. Kafka brokers (E, F, G)
-2. ClickHouse (I)
-3. Ingestors (B, C, D)
-4. Nginx (A)
-5. Flink (H)
-6. Generator (A)
-7. Kafka UI (optional, anytime after Kafka)
-
-### 2a. Prepare config (do once, on any machine)
+## 2) Distributed
 
 ```bash
-# 1. Start from the distributed template
+# 0. 템플릿 활성화
 cp config/.env.distributed config/.env
+# 이후 config/.env에 실제 IP/PORT 입력
 
-# 2. Edit config/.env — update IPs in the INSTANCE REGISTRY at the top.
-#    Per-component compose files derive connection strings from these
-#    IPs automatically via Docker Compose ${VAR} substitution.
+# 1. Kafka brokers
 
-# 3. Edit ops/compose/distributed/nginx.distributed.conf — replace upstream IPs manually.
-#    Nginx cannot read env vars in upstream {} blocks.
+docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3
 
-# 4. Push config/.env to every machine
-scp config/.env <user>@<machine>:~/project/config/.env   # repeat for each
-```
+# 2. ClickHouse
+docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d clickhouse
 
-### 2b. Start components (per machine, in order)
+# 3. Ingestor + Nginx
+docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3 nginx-lb
 
-Start the layers bottom-up. Kafka and ClickHouse must be ready before the layers that depend on them.
+# 4. Flink
+docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d flink-jobmanager flink
 
-```bash
-# ── Machine E  (Kafka broker 1)
-docker compose -f ops/compose/distributed/kafka-1.yml up -d
+# 5. Kafka UI (optional)
+docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d kafka-ui
 
-# ── Machine F  (Kafka broker 2)
-docker compose -f ops/compose/distributed/kafka-2.yml up -d
-
-# ── Machine G  (Kafka broker 3)
-docker compose -f ops/compose/distributed/kafka-3.yml up -d
-
-# ── Machine I  (ClickHouse)
-docker compose -f ops/compose/distributed/clickhouse.yml up -d
-
-# ── Machine B  (Ingestor 1)   — after Kafka is up
-docker compose -f ops/compose/distributed/ingestor-1.yml up -d
-
-# ── Machine C  (Ingestor 2)
-docker compose -f ops/compose/distributed/ingestor-2.yml up -d
-
-# ── Machine D  (Ingestor 3)
-docker compose -f ops/compose/distributed/ingestor-3.yml up -d
-
-# ── Machine A  (Nginx + Generator)   — after Ingestors are up
-docker compose -f ops/compose/distributed/ingestor-nginx.yml up -d
+# 6. Generator (native)
 cd services/generator && ./build/generate
-
-# ── Machine H  (Flink)   — after Kafka and ClickHouse are up
-docker compose -f ops/compose/distributed/flink.yml up -d
-
-# ── Kafka UI   (optional, deploy on any machine that can reach Kafka)
-docker compose -f ops/compose/distributed/kafka-ui.yml up -d
 ```
 
----
+## 보장 범위
+`docker compose up <service>`만으로 자동 보장되지 않는 항목:
+1. `.env` compose 치환값 로딩 (`--env-file` 필요)
+2. 선행 의존 서비스 준비 (예: Kafka 없이 ingestor 단독)
+3. Generator 실행 (compose 서비스 아님)
 
-## Which version is active?
-
+## 빠른 검증
 ```bash
-head -1 config/.env   # Shows "VERSION 1" or "VERSION 2"
-```
+# .env network-only 확인
+awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/{print $1}' config/.env | rg -v '(_IP|_PORT)$'
 
----
+# compose 치환 검증
+
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env config >/dev/null
+
+docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env config >/dev/null
+```
 
 ## Do not commit
-
-`config/.env` (the active config) should not be committed. Only the templates (`.env.single-machine`, `.env.distributed`) are version-controlled.
+실사용 값이 들어간 `config/.env`는 커밋하지 않는다.

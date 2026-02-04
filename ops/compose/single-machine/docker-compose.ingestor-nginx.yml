@@ -4,10 +4,8 @@ services:
   nginx-lb:
     image: nginx:alpine
     container_name: ingestor-lb
-    env_file:
-      - ../../../config/.env
     ports:
       - "${NGINX_LB_PORT:-8080}:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../../infra/nginx/nginx.single-machine.conf:/etc/nginx/nginx.conf:ro
     restart: unless-stopped

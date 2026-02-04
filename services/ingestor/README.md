@@ -1,96 +1,48 @@
-## Prerequisites
+# Ingestor Runtime Guide
 
-1. **Docker & Docker Compose**
-2. **Kafka Running** (via Docker)
-   ```bash
-   docker compose -f ops/compose/single-machine/kafka.yml up -d
-   ```
+## 핵심 파일
+- App config: `services/ingestor/config/default.yaml`
+- Spring config import: `services/ingestor/src/main/resources/application.yml`
+- Compose entrypoint (single): `ops/compose/single-machine/docker-compose.yml`
+- Compose entrypoint (distributed): `ops/compose/distributed/docker-compose.yml`
 
-> All commands below assume you run them from the project root.
+Ingestor는 `spring.config.import`로 `/app/config/default.yaml`을 읽습니다.
 
-## Real Quick Start
-
-**All services at once**  
-docker compose -f ops/compose/single-machine/ingestor.yml up -d --build                                                                                                     
-                                                                                                                                
-**Individual — use these exact service names from ingestor.yml**
-
-docker compose -f ops/compose/single-machine/ingestor.yml up -d ingestor-1                                                                                          
-docker compose -f ops/compose/single-machine/ingestor.yml up -d ingestor-2                                                                                          
-docker compose -f ops/compose/single-machine/ingestor.yml up -d ingestor-3                                                                                          
-docker compose -f ops/compose/single-machine/ingestor.yml up -d nginx-lb
-
-## Quick Start (Docker Cluster)
-
-### 1. Start Ingestor Cluster (3 instances + Nginx LB)
-
+## 실행 전 준비
 ```bash
-docker compose -f ops/compose/single-machine/ingestor.yml up -d --build
+cp config/.env.single-machine config/.env
+# distributed는 .env.distributed를 복사 후 실제 IP/PORT 반영
 ```
 
-This starts:
-
-- `ingestor-1`, `ingestor-2`, `ingestor-3` (port 8081-8083)
-- `nginx-lb` (port 8080) - load balancer
-
-### 2. Check Status
-
+## Single-machine 기동
 ```bash
-docker compose -f ops/compose/single-machine/ingestor.yml ps
+# Kafka 먼저
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3
+
+# Ingestor 3개 + nginx LB
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3 nginx-lb
 ```
 
-### 3. Run the Generator
+## Distributed 기동
+```bash
+docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3 nginx-lb
+```
 
+## 상태/로그
+```bash
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env ps ingestor-1 ingestor-2 ingestor-3 nginx-lb
+docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env logs -f ingestor-1 ingestor-2 ingestor-3
+```
+
+## Generator 연동
 ```bash
 cd services/generator
 ./build/generate
 ```
 
-### 4. Monitor Logs
-
+## 로컬 개발(비도커)
 ```bash
-docker compose -f ops/compose/single-machine/ingestor.yml logs -f ingestor-1 ingestor-2 ingestor-3
-```
-
-### 5. Stop Cluster
-
-```bash
-docker compose -f ops/compose/single-machine/ingestor.yml down
-```
-
-## Local Development (Without Docker)
-
-Requires Java 17+ and Gradle.
-
-### Build & Run
-
-```bash
+cd services/ingestor
 ./gradlew clean build
 ./gradlew bootRun
 ```
-
-**Expected startup log:**
-
-```text
-[STARTUP] Initializing ingestion pipeline: buffer=10000, batch=500, timeout=50ms, topic=taxi-event-data
-```
-
-## Testing Scenarios
-
-### Test 1: Normal Operation
-
-**Goal**: Verify events flow end-to-end
-
-1. Start ingestor: `./gradlew bootRun`
-2. Start generator: `cd services/generator && ./build/generate`
-3. Watch ingestor logs for metrics every 10 seconds:
-   ```
-   [METRICS] events_received=5000, events_processed=4998, events_failed=0,
-             events_dropped=0, batches_sent=10, buffer_usage=5%, success_rate=99.96%
-   ```
-
-**Success criteria:**
-- ✅ `events_received` increases steadily
-- ✅ `events_processed` ≈ `events_received`
-- ✅ `events_dropped` = 0
-- ✅ `success_rate` > 99%

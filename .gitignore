@@ -50,6 +50,9 @@ cmake-build-*/
 # flink-job
 /services/flink-job/target/
 
+# connector
+infra/connectors/s3-sink-config.json
+
 # logs
 *.log
 

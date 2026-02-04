@@ -2,6 +2,8 @@ server:
   port: 8080
 
 spring:
+  config:
+    import: "optional:file:./config/default.yaml,optional:file:/app/config/default.yaml"
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -17,7 +19,3 @@ spring:
         max.in.flight.requests.per.connection: 5
         buffer.memory: 67108864    # 64MB
         max.block.ms: 2000         # Match generator timeout
-
-app:
-  kafka:
-    topic: ${APP_KAFKA_TOPIC:taxi-event-data}

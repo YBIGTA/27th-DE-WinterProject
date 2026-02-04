@@ -21,18 +21,10 @@ services:
 
       CLUSTER_ID: "MkU3OEVCNTcwNTJENDM2Qk"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        awk -F': *' '/^[A-Z0-9_]+:/{v=$2; gsub(/^"|"$/, "", v); print $1 "=\"" v "\""}' /config/default.yaml > /tmp/kafka_runtime.env
-        set -a
-        . /tmp/kafka_runtime.env
-        set +a
-        exec /etc/confluent/docker/run
-
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     volumes:
       - ../../../infra/kafka/config/default.yaml:/config/default.yaml:ro
+      - ../../../infra/kafka/entrypoint.sh:/entrypoint.sh:ro
       - kafka2-data:/var/lib/kafka/data
     networks:
       - kafka-network

@@ -3,8 +3,9 @@ component: clickhouse-docker-compose
 status: CURRENT
 last_reviewed: 2026-02-02
 core_files:
-  - ops/compose/single-machine/clickhouse.yml
-  - ops/compose/distributed/clickhouse.yml
+  - ops/compose/single-machine/docker-compose.clickhouse.yml
+  - ops/compose/distributed/docker-compose.clickhouse.yml
+  - infra/clickhouse/config/default.yaml
   - infra/clickhouse/schema.sql
 ---
 
@@ -24,7 +25,7 @@ core_files:
 ```mermaid
 flowchart TD
     A[Docker Compose Up] --> B[clickhouse 서비스 컨테이너 실행]
-    B --> C[환경 변수 적용: TZ]
+    B --> C[환경 변수 적용: default.yaml 파싱]
     B --> D[포트 바인딩: 8123/9000]
     B --> E[볼륨 마운트: clickhouse_data]
     B --> F[schema.sql 마운트: /docker-entrypoint-initdb.d/schema.sql]
@@ -44,6 +45,7 @@ flowchart TD
 - ClickHouse 서버 컨테이너를 고정 버전(`clickhouse/clickhouse-server:23.8`)으로 실행한다.
 - HTTP(8123)와 Native TCP(9000) 포트를 호스트에 노출한다.
 - `clickhouse_data` 볼륨을 통해 데이터 디렉터리를 영속화한다.
+- `infra/clickhouse/config/default.yaml`를 컨테이너 시작 시 파싱하여 런타임 환경 변수를 주입한다.
 - `schema.sql`을 `/docker-entrypoint-initdb.d/`에 마운트해 초기 스키마 적용을 가능하게 한다.
 - `/ping` 헬스체크로 컨테이너 상태를 주기적으로 확인한다.
 
