@@ -14,24 +14,15 @@ import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindo
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
-import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Map;
 
 public class TaxiRealtimeJob {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        String configPath = System.getenv("FLINK_CONFIG_PATH");
-        if (configPath == null || configPath.isBlank()) {
-            configPath = args.length > 2 ? args[2] : "config/default.yaml";
-        }
-        JobConfig jobConfig = loadConfig(configPath);
+        JobConfig jobConfig = loadConfigFromEnv();
 
         env.setParallelism(jobConfig.parallelism);
 
@@ -129,60 +120,34 @@ public class TaxiRealtimeJob {
         int taskmanagerSlots = 2;
     }
 
-    @SuppressWarnings("unchecked")
-    private static JobConfig loadConfig(String path) {
+    private static JobConfig loadConfigFromEnv() {
         JobConfig cfg = new JobConfig();
-        if (path == null || path.isBlank()) return cfg;
-        try (InputStream in = Files.newInputStream(Path.of(path))) {
-            Object data = new Yaml().load(in);
-            if (!(data instanceof Map)) return cfg;
-            Map<String, Object> root = (Map<String, Object>) data;
-
-            cfg.parallelism = getInt(root, "parallelism", cfg.parallelism);
-            cfg.kafkaTopic = getString(getMap(root, "kafka"), "topic", cfg.kafkaTopic);
-            cfg.taskmanagerSlots = getInt(getMap(root, "taskmanager"), "slots", cfg.taskmanagerSlots);
-
-            Map<String, Object> clickhouse = getMap(root, "clickhouse");
-            cfg.clickhouseDatabase = getString(clickhouse, "database", cfg.clickhouseDatabase);
-            cfg.clickhouseTable = getString(clickhouse, "table", cfg.clickhouseTable);
-
-            Map<String, Object> watermark = getMap(root, "watermark");
-            cfg.watermarkOutOfOrdernessSec = getInt(watermark, "out_of_orderness_sec", cfg.watermarkOutOfOrdernessSec);
-
-            Map<String, Object> window = getMap(root, "window");
-            cfg.windowDemandMinutes = getInt(window, "demand_minutes", cfg.windowDemandMinutes);
-
-            Map<String, Object> jdbc = getMap(root, "jdbc");
-            cfg.jdbcBatchSize = getInt(jdbc, "batch_size", cfg.jdbcBatchSize);
-            cfg.jdbcBatchIntervalMs = getInt(jdbc, "batch_interval_ms", cfg.jdbcBatchIntervalMs);
-        } catch (Exception e) {
-            System.err.println("[Config] Using defaults (file not found: " + path + ")");
-        }
+        cfg.parallelism = getEnvInt("FLINK_PARALLELISM", cfg.parallelism);
+        cfg.kafkaTopic = getEnvString("FLINK_KAFKA_TOPIC", cfg.kafkaTopic);
+        cfg.taskmanagerSlots = getEnvInt("FLINK_TASKMANAGER_SLOTS", cfg.taskmanagerSlots);
+        cfg.clickhouseDatabase = getEnvString("FLINK_CLICKHOUSE_DATABASE", cfg.clickhouseDatabase);
+        cfg.clickhouseTable = getEnvString("FLINK_CLICKHOUSE_TABLE", cfg.clickhouseTable);
+        cfg.watermarkOutOfOrdernessSec = getEnvInt("FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC", cfg.watermarkOutOfOrdernessSec);
+        cfg.windowDemandMinutes = getEnvInt("FLINK_WINDOW_DEMAND_MINUTES", cfg.windowDemandMinutes);
+        cfg.jdbcBatchSize = getEnvInt("FLINK_JDBC_BATCH_SIZE", cfg.jdbcBatchSize);
+        cfg.jdbcBatchIntervalMs = getEnvInt("FLINK_JDBC_BATCH_INTERVAL_MS", cfg.jdbcBatchIntervalMs);
         return cfg;
     }
 
-    private static Map<String, Object> getMap(Map<String, Object> root, String key) {
-        if (root == null) return null;
-        Object val = root.get(key);
-        if (val instanceof Map) return (Map<String, Object>) val;
-        return null;
-    }
-
-    private static int getInt(Map<String, Object> map, String key, int def) {
-        if (map == null || key == null) return def;
-        Object val = map.get(key);
-        if (val instanceof Number) return ((Number) val).intValue();
-        if (val instanceof String) {
-            try { return Integer.parseInt((String) val); } catch (Exception ignored) {}
+    private static int getEnvInt(String key, int def) {
+        String raw = System.getenv(key);
+        if (raw == null || raw.isBlank()) return def;
+        try {
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException ignored) {
+            return def;
         }
-        return def;
     }
 
-    private static String getString(Map<String, Object> map, String key, String def) {
-        if (map == null || key == null) return def;
-        Object val = map.get(key);
-        if (val instanceof String) return (String) val;
-        return def;
+    private static String getEnvString(String key, String def) {
+        String raw = System.getenv(key);
+        if (raw == null || raw.isBlank()) return def;
+        return raw;
     }
 
     private static String sanitizeIdentifier(String value, String def) {

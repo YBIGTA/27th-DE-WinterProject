@@ -8,10 +8,10 @@ import shapefile
 from pyproj import CRS, Transformer
 
 
-ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SHAPE_PATH = ROOT / "data" / "taxi_zones" / "taxi_zones.shp"
-DEFAULT_PRJ_PATH = ROOT / "data" / "taxi_zones" / "taxi_zones.prj"
-DEFAULT_OUTPUT_PATH = ROOT / "data" / "taxi_zone_median_coords.csv"
+DATA_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_SHAPE_PATH = DATA_ROOT / "taxi_zones" / "taxi_zones.shp"
+DEFAULT_PRJ_PATH = DATA_ROOT / "taxi_zones" / "taxi_zones.prj"
+DEFAULT_OUTPUT_PATH = DATA_ROOT / "taxi_zone_median_coords.csv"
 
 SKIP_LOCATION_IDS = {264, 265}
 

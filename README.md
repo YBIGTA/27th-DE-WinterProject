@@ -4,46 +4,51 @@ Reliable, scalable, fault-tolerant data pipeline simulation project.
 ## Directory
 ```text
 .
-├── analysis
 ├── config
-├── infra
-├── ops
-│   └── compose
-│       ├── single-machine
-│       └── distributed
 ├── data
-├── preprocess
+│   ├── analysis
+│   ├── preprocess
+│   ├── pyproject.toml
+│   └── uv.lock
+├── infra
+│   ├── clickhouse
+│   ├── connectors
+│   ├── flink
+│   ├── kafka
+│   ├── nginx
+│   ├── spark
+│   └── terraform
 └── services
+    ├── flink-job
     ├── generator
-    ├── ingestor
-    └── flink-job
+    └── ingestor
 ```
 
 ## 문서 우선순위
-혼란 줄이기 위해 아래 순서로만 보면 됩니다.
-
 1. 실행/운영: `config/README.md`
-2. 설정 아키텍처 상세: `config/EXPLANATION.md`
-3. Phase 진행 요약: `REFACTORING.md`
-4. 컴포넌트별 설정 위치: `config/COMPONENT-CONFIGS.md`
+2. 설정 구조: `config/EXPLANATION.md`
+3. 컴포넌트별 매핑: `config/COMPONENT-CONFIGS.md`
+4. 리팩토링 이력: `REFACTORING.md`
 
-## 실행 원칙 (Phase 2)
+## 실행 원칙
 1. `config/.env`는 IP/PORT만 관리한다.
-2. non-network 값(topic, tuning, table 등)은 각 YAML(`services/*/config/default.yaml`, `infra/*/config/default.yaml`)에서 관리한다.
-3. Compose 실행은 항상 `--env-file config/.env`를 함께 사용한다.
+2. non-network 값(topic, tuning, table 등)은 컴포넌트 compose 파일에 하드코딩한다.
+3. 각 컴포넌트 compose 파일을 직접 실행한다 (root launcher 없음).
 
-## Quick Start
+## Quick Start (single-machine)
 ```bash
-# 1) 모드 선택
 cp config/.env.single-machine config/.env
-# 또는
-# cp config/.env.distributed config/.env
 
-# 2) 원하는 서비스 기동 (root 기준)
-docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3 clickhouse
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3 kafka-ui
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d clickhouse
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
+docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up -d nginx-lb
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env up -d flink-jobmanager flink
 ```
 
 ## Environment
 - JDK 21
 - Python: `uv`
 - C++ build: Conan + CMake
+
+Python `uv` workspace files are in `data/` (`data/pyproject.toml`, `data/uv.lock`).

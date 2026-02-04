@@ -1,12 +1,11 @@
 # Ingestor Runtime Guide
 
 ## 핵심 파일
-- App config: `services/ingestor/config/default.yaml`
-- Spring config import: `services/ingestor/src/main/resources/application.yml`
-- Compose entrypoint (single): `ops/compose/single-machine/docker-compose.yml`
-- Compose entrypoint (distributed): `ops/compose/distributed/docker-compose.yml`
+- App bootstrap: `services/ingestor/src/main/resources/application.yml`
+- Compose (single): `services/ingestor/docker-compose.yml`
+- Compose (distributed): `services/ingestor/docker-compose.distributed.yml`
 
-Ingestor는 `spring.config.import`로 `/app/config/default.yaml`을 읽습니다.
+Ingestor runtime 값(topic/tuning)은 compose의 `APP_*` 환경변수로 주입한다.
 
 ## 실행 전 준비
 ```bash
@@ -17,32 +16,28 @@ cp config/.env.single-machine config/.env
 ## Single-machine 기동
 ```bash
 # Kafka 먼저
-docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3
 
-# Ingestor 3개 + nginx LB
-docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3 nginx-lb
+# Ingestor 3개
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
+
+# Nginx LB
+docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up -d nginx-lb
 ```
 
 ## Distributed 기동
 ```bash
-docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3 nginx-lb
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
 ```
 
 ## 상태/로그
 ```bash
-docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env ps ingestor-1 ingestor-2 ingestor-3 nginx-lb
-docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env logs -f ingestor-1 ingestor-2 ingestor-3
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env ps ingestor-1 ingestor-2 ingestor-3
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env logs -f ingestor-1 ingestor-2 ingestor-3
 ```
 
 ## Generator 연동
 ```bash
 cd services/generator
 ./build/generate
-```
-
-## 로컬 개발(비도커)
-```bash
-cd services/ingestor
-./gradlew clean build
-./gradlew bootRun
 ```

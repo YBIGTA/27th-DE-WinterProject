@@ -1,14 +1,12 @@
-version: '3.8'
-
 services:
   nginx-lb:
     image: nginx:alpine
     container_name: ingestor-lb
     env_file:
-      - ../../../config/.env
+      - ../../config/.env
     ports:
       - "${NGINX_LB_PORT:-8080}:80"
     volumes:
-      - ../../../infra/nginx/templates/nginx.distributed.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./templates/nginx.distributed.conf.template:/etc/nginx/templates/nginx.conf.template:ro
     command: sh -c 'envsubst < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g "daemon off;"'
     restart: unless-stopped

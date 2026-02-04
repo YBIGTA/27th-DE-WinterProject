@@ -1,6 +1,0 @@
-include:
-  - docker-compose.kafka.yml
-  - docker-compose.clickhouse.yml
-  - docker-compose.ingestor.yml
-  - docker-compose.ingestor-nginx.yml
-  - docker-compose.flink.yml

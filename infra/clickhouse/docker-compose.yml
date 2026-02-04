@@ -1,12 +1,12 @@
-version: "3.8"
-
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:23.8
     container_name: clickhouse
     restart: unless-stopped
     env_file:
-      - ../../../config/.env
+      - ../../config/.env
+    environment:
+      TZ: "Asia/Seoul"
     ports:
       - "${CLICKHOUSE_HTTP_PORT:-8123}:8123" # HTTP interface
       - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000" # Native TCP interface
@@ -15,11 +15,10 @@ services:
         soft: 262144
         hard: 262144
     volumes:
-      - ../../../infra/clickhouse/config/default.yaml:/etc/clickhouse-server/config.d/default.yaml:ro
       - clickhouse_data:/var/lib/clickhouse
-      - ../../../infra/clickhouse/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
-      test: [ "CMD", "bash", "-lc", "wget -qO- http://localhost:${CLICKHOUSE_HTTP_PORT:-8123}/ping | grep -q Ok" ]
+      test: ["CMD", "bash", "-lc", "wget -qO- http://localhost:${CLICKHOUSE_HTTP_PORT:-8123}/ping | grep -q Ok"]
       interval: 10s
       timeout: 5s
       retries: 12

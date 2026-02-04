@@ -1,30 +1,29 @@
-# Component Config Spec (Phase 2)
+# Component Config Spec (Demolish Ops)
 
-Status: `CURRENT` (core wiring completed)
+Status: `CURRENT`
 
 ## 목적
-- `.env`는 네트워크 경로(IP/PORT)만 관리
-- 컴포넌트 YAML은 기능/성능 튜닝 관리
-- 실행은 `ops/compose/*` + `--env-file config/.env` 기준
+- `.env`는 네트워크(IP/PORT)만 관리
+- 배포 서비스의 non-network 설정은 컴포넌트 compose에 하드코딩
+- 실행은 각 컴포넌트 compose 파일 직접 실행 기준
 
-## Component Config Matrix
-| Component | Config Path | Format | Runtime Load |
-|---|---|---|---|
-| Ingestor | `services/ingestor/config/default.yaml` | YAML | Spring `spring.config.import` |
-| Generator | `services/generator/config/default.yaml` | YAML | `generate.cpp` YAML parser |
-| Flink job | `services/flink-job/config/default.yaml` | YAML | `FLINK_CONFIG_PATH` + SnakeYAML |
-| Kafka | `infra/kafka/config/default.yaml` | YAML(flat map) | `infra/kafka/entrypoint.sh` sources YAML -> env export |
-| ClickHouse | `infra/clickhouse/config/default.yaml` | YAML | native config at `/etc/clickhouse-server/config.d/` |
-| Nginx (SM) | `infra/nginx/nginx.single-machine.conf` | conf | static mount to `/etc/nginx/nginx.conf` |
-| Nginx (DM) | `infra/nginx/templates/nginx.distributed.conf.template` | template | `envsubst` (`.env` IP/PORT only) |
-| S3 Connector | `infra/connectors/s3-sink-config.template.json` | JSON | Kafka Connect REST payload |
+## Component Runtime Matrix
+| Component | Runtime Owner | Runtime Values Source |
+|---|---|---|
+| Kafka | `infra/kafka/docker-compose.*.yml` | compose `environment` (hardcoded tuning) |
+| ClickHouse | `infra/clickhouse/docker-compose.*.yml` | compose `environment` + schema mount |
+| Nginx (SM) | `infra/nginx/docker-compose.yml` | static `nginx.single-machine.conf` |
+| Nginx (DM) | `infra/nginx/docker-compose.distributed.yml` | template + `.env` IP/PORT envsubst |
+| Ingestor | `services/ingestor/docker-compose.*.yml` | compose `environment` (`APP_*`, `SPRING_*`) |
+| Flink | `infra/flink/docker-compose.*.yml` | compose `environment` (`FLINK_*`) |
+| Generator | native run (`services/generator`) | `services/generator/config/default.yaml` |
 
 ## Compose 연결 원칙
-1. `config/.env`를 먼저 준비 (`.env.single-machine` 또는 `.env.distributed` 복사)
-2. compose는 `--env-file config/.env`로 실행
-3. 앱 컨피그는 각 서비스에서 마운트/로딩
+1. `config/.env` 준비 (`.env.single-machine` 또는 `.env.distributed` 복사)
+2. 필요한 컴포넌트 compose만 직접 실행
+3. 항상 `--env-file config/.env` 명시
 
 ## 제약
-- Kafka YAML은 flat key 구조 유지 권장 (entrypoint.sh awk 파서)
-- Nginx 튜닝 값은 conf 파일에 직접 기술 (env 아님)
-- Generator는 compose 서비스가 아니라 native 실행(`services/generator/README.md`)
+- `config/.env`에는 `*_IP`, `*_PORT`만 허용
+- 배포 서비스에서 `*/config/default.yaml` 마운트 금지
+- Generator는 compose 서비스가 아니라 native 실행

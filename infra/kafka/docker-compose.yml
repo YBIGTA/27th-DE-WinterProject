@@ -1,11 +1,9 @@
-version: "3.8"
-
 services:
   kafka-1:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-1
     env_file:
-      - ../../../config/.env
+      - ../../config/.env
     ports:
       - "${KAFKA_1_EXTERNAL_PORT:-9092}:9092"
     environment:
@@ -13,18 +11,23 @@ services:
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:${KAFKA_CONTROLLER_PORT:-19093},2@kafka-2:${KAFKA_CONTROLLER_PORT:-19093},3@kafka-3:${KAFKA_CONTROLLER_PORT:-19093}"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-
       KAFKA_LISTENERS: "EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:${KAFKA_INTERNAL_PORT:-29092},CONTROLLER://0.0.0.0:${KAFKA_CONTROLLER_PORT:-19093}"
       KAFKA_ADVERTISED_LISTENERS: "EXTERNAL://localhost:${KAFKA_1_EXTERNAL_PORT:-9092},INTERNAL://kafka-1:${KAFKA_INTERNAL_PORT:-29092}"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
-
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_COMPRESSION_TYPE: "lz4"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_NUM_PARTITIONS: 4
     volumes:
-      - ../../../infra/kafka/config/default.yaml:/config/default.yaml:ro
-      - ../../../infra/kafka/entrypoint.sh:/entrypoint.sh:ro
       - kafka1-data:/var/lib/kafka/data
     networks:
       - kafka-network
@@ -40,7 +43,7 @@ services:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-2
     env_file:
-      - ../../../config/.env
+      - ../../config/.env
     ports:
       - "${KAFKA_2_EXTERNAL_PORT:-9094}:9092"
     environment:
@@ -48,18 +51,23 @@ services:
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:${KAFKA_CONTROLLER_PORT:-19093},2@kafka-2:${KAFKA_CONTROLLER_PORT:-19093},3@kafka-3:${KAFKA_CONTROLLER_PORT:-19093}"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-
       KAFKA_LISTENERS: "EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:${KAFKA_INTERNAL_PORT:-29092},CONTROLLER://0.0.0.0:${KAFKA_CONTROLLER_PORT:-19093}"
       KAFKA_ADVERTISED_LISTENERS: "EXTERNAL://localhost:${KAFKA_2_EXTERNAL_PORT:-9094},INTERNAL://kafka-2:${KAFKA_INTERNAL_PORT:-29092}"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
-
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_COMPRESSION_TYPE: "lz4"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_NUM_PARTITIONS: 4
     volumes:
-      - ../../../infra/kafka/config/default.yaml:/config/default.yaml:ro
-      - ../../../infra/kafka/entrypoint.sh:/entrypoint.sh:ro
       - kafka2-data:/var/lib/kafka/data
     networks:
       - kafka-network
@@ -78,7 +86,7 @@ services:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-3
     env_file:
-      - ../../../config/.env
+      - ../../config/.env
     ports:
       - "${KAFKA_3_EXTERNAL_PORT:-9096}:9092"
     environment:
@@ -86,18 +94,23 @@ services:
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:${KAFKA_CONTROLLER_PORT:-19093},2@kafka-2:${KAFKA_CONTROLLER_PORT:-19093},3@kafka-3:${KAFKA_CONTROLLER_PORT:-19093}"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-
       KAFKA_LISTENERS: "EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:${KAFKA_INTERNAL_PORT:-29092},CONTROLLER://0.0.0.0:${KAFKA_CONTROLLER_PORT:-19093}"
       KAFKA_ADVERTISED_LISTENERS: "EXTERNAL://localhost:${KAFKA_3_EXTERNAL_PORT:-9096},INTERNAL://kafka-3:${KAFKA_INTERNAL_PORT:-29092}"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
-
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_COMPRESSION_TYPE: "lz4"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_NUM_PARTITIONS: 4
     volumes:
-      - ../../../infra/kafka/config/default.yaml:/config/default.yaml:ro
-      - ../../../infra/kafka/entrypoint.sh:/entrypoint.sh:ro
       - kafka3-data:/var/lib/kafka/data
     networks:
       - kafka-network
@@ -116,7 +129,7 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     env_file:
-      - ../../../config/.env
+      - ../../config/.env
     ports:
       - "${KAFKA_UI_PORT:-8090}:8080"
     environment:

@@ -1,10 +1,11 @@
 # ClickHouse Runtime Guide
 
 ## 파일 위치
-- Single-machine compose: `ops/compose/single-machine/docker-compose.yml`
-- Distributed compose: `ops/compose/distributed/docker-compose.yml`
-- Runtime tuning YAML: `infra/clickhouse/config/default.yaml`
+- Single-machine compose: `infra/clickhouse/docker-compose.yml`
+- Distributed compose: `infra/clickhouse/docker-compose.distributed.yml`
 - Schema: `infra/clickhouse/schema.sql`
+
+ClickHouse runtime 값은 compose에 하드코딩되어 있고, schema는 mount로 초기화된다.
 
 ## 실행 전 준비
 ```bash
@@ -15,10 +16,10 @@ cp config/.env.single-machine config/.env
 ## 실행
 ```bash
 # single-machine
-docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env up -d clickhouse
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d clickhouse
 
 # distributed
-docker compose -f ops/compose/distributed/docker-compose.yml --env-file config/.env up -d clickhouse
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse
 ```
 
 ## 헬스체크
@@ -33,5 +34,5 @@ curl -s http://localhost:8123/ping
 
 ## 중지
 ```bash
-docker compose -f ops/compose/single-machine/docker-compose.yml --env-file config/.env stop clickhouse
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env stop clickhouse
 ```

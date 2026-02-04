@@ -5,10 +5,10 @@ import pyarrow.parquet as pq
 import matplotlib.pyplot as plt
 
 # --- raw ver
-# base_dir = Path(__file__).resolve().parent.parent / "data" / "taxi_data"
+# base_dir = Path(__file__).resolve().parent.parent / "taxi_data"
 
 # --- preprocessed ver
-base_dir = Path(__file__).resolve().parent.parent / "data" / "taxi_data_preprocessed"
+base_dir = Path(__file__).resolve().parent.parent / "taxi_data_preprocessed"
 
 files = sorted(base_dir.rglob("*.parquet"))
 out_dir = Path(__file__).resolve().parent / "outputs"

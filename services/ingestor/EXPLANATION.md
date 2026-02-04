@@ -10,8 +10,9 @@ core_files:
   - src/main/java/com/ingestion/dto/TaxiEvent.java
   - src/main/java/com/ingestion/dto/BatchIngestResponse.java
   - src/main/resources/application.yml
-  - ops/compose/single-machine/docker-compose.ingestor.yml
-  - infra/nginx/templates/nginx.single-machine.conf.template
+  - services/ingestor/docker-compose.yml
+  - services/ingestor/docker-compose.distributed.yml
+  - infra/nginx/nginx.single-machine.conf
 ---
 
 # Ingestor

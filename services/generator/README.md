@@ -4,8 +4,8 @@
 `services/generator`에서 실행:
 
 ```bash
-uv run conan profile detect --force
-uv run conan install . -of build --build=missing
+uv --project ../../data run conan profile detect --force
+uv --project ../../data run conan install . -of build --build=missing
 
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build

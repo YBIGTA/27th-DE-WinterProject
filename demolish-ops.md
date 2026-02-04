@@ -1,7 +1,15 @@
 ---
-status: DRAFT
+status: IN PROGRESS
 created: 2026-02-04
 purpose: remove-ops-and-shift-runtime-control-to-infra-services
+progress:
+  - 2026-02-04: single-machine compose relocation started
+  - 2026-02-04: component-owned single-machine compose files added
+  - 2026-02-04: component-owned distributed compose files added
+  - 2026-02-04: runtime YAML dependencies removed for Kafka/ClickHouse/Ingestor/Flink
+  - 2026-02-04: ops directory deleted
+  - 2026-02-04: root launcher compose files deleted
+  - 2026-02-04: config + component runbook docs updated to per-component compose entrypoints
 ---
 
 # Demolish Ops Plan
@@ -21,20 +29,17 @@ purpose: remove-ops-and-shift-runtime-control-to-infra-services
 
 ## Target structure
 1. Component-owned compose files:
-   - `infra/kafka/docker-compose.single-machine.yml`
+   - `infra/kafka/docker-compose.yml`
    - `infra/kafka/docker-compose.distributed.yml`
-   - `infra/clickhouse/docker-compose.single-machine.yml`
+   - `infra/clickhouse/docker-compose.yml`
    - `infra/clickhouse/docker-compose.distributed.yml`
-   - `infra/nginx/docker-compose.single-machine.yml`
+   - `infra/nginx/docker-compose.yml`
    - `infra/nginx/docker-compose.distributed.yml`
-   - `services/ingestor/docker-compose.single-machine.yml`
+   - `services/ingestor/docker-compose.yml`
    - `services/ingestor/docker-compose.distributed.yml`
-   - `services/flink-job/docker-compose.single-machine.yml`
-   - `services/flink-job/docker-compose.distributed.yml`
-2. Optional root launchers (recommended for UX, not in `ops/`):
-   - `docker-compose.single-machine.yml`
-   - `docker-compose.distributed.yml`
-3. `ops/` deleted after cutover.
+   - `infra/flink/docker-compose.yml`
+   - `infra/flink/docker-compose.distributed.yml`
+2. `ops/` deleted after cutover.
 
 ## Config model after cutover
 1. Keep:
@@ -57,8 +62,7 @@ purpose: remove-ops-and-shift-runtime-control-to-infra-services
 ### Phase 1: Compose relocation (no behavior change yet)
 1. Copy existing compose definitions from `ops/compose/...` into component directories.
 2. Keep service names, network names, volumes, and env references identical.
-3. Add optional root launchers that include component-owned files.
-4. Validate `docker compose ... config` for both modes.
+3. Validate `docker compose ... config` for both modes.
 
 ### Phase 2: Remove YAML runtime config dependency
 1. Kafka:
@@ -102,10 +106,10 @@ purpose: remove-ops-and-shift-runtime-control-to-infra-services
 5. Updated docs point to new compose paths and commands.
 6. Single-machine and distributed smoke tests pass.
 
-## Open decisions before implementation
+## Decisions made
 1. Generator scope:
-   - Keep `services/generator/config/default.yaml` for native CLI runs, or remove it in the same migration?
+   - Keep `services/generator/config/default.yaml` for native CLI runs.
 2. Root launcher strategy:
-   - Keep two root compose launcher files for convenience, or require multi-`-f` commands only?
+   - Remove root launcher files and run component compose files directly.
 3. Distributed deployment style:
-   - One distributed file per component (with all instances) vs per-instance files.
+   - Use one distributed file per component containing all instances.

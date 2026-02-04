@@ -1,2 +1,0 @@
-# ClickHouse runtime config (native YAML, mounted to config.d)
-timezone: "Asia/Seoul"

@@ -7,10 +7,9 @@ import pyarrow.parquet as pq
 from tqdm import tqdm
 
 
-INPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "taxi_data_preprocessed"
-OUTPUT_DIR = (
-    Path(__file__).resolve().parent.parent / "data" / "taxi_data_preprocessed_with_trip_id"
-)
+DATA_ROOT = Path(__file__).resolve().parent.parent
+INPUT_DIR = DATA_ROOT / "taxi_data_preprocessed"
+OUTPUT_DIR = DATA_ROOT / "taxi_data_preprocessed_with_trip_id"
 MAX_SEQ = 1_000_000_000
 def _append_trip_id(table: pa.Table, counters: dict[str, int]) -> pa.Table:
     if "tpep_pickup_datetime" not in table.column_names:

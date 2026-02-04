@@ -582,8 +582,8 @@ end_date=2024-04
 ```bash
 # One-time setup
 cd services/generator
-uv run conan profile detect --force
-uv run conan install . -of build --build=missing
+uv --project ../../data run conan profile detect --force
+uv --project ../../data run conan install . -of build --build=missing
 
 # Initial build
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release

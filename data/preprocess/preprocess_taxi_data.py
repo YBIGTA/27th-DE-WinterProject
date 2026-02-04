@@ -7,8 +7,9 @@ import pyarrow.parquet as pq
 from tqdm import tqdm
 
 
-INPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "taxi_data"
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "taxi_data_preprocessed2"
+DATA_ROOT = Path(__file__).resolve().parent.parent
+INPUT_DIR = DATA_ROOT / "taxi_data"
+OUTPUT_DIR = DATA_ROOT / "taxi_data_preprocessed2"
 
 YEAR_MIN = 2011
 YEAR_MAX = 2025
