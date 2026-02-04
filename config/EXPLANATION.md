@@ -15,6 +15,7 @@ core_files:
   - infra/kafka/docker-compose.kafka-{1,2,3}.yml
   - infra/clickhouse/docker-compose.yml
   - infra/flink/docker-compose.yml
+  - infra/flink/docker-compose.flink.yml
   - connectors/s3-sink-config.template.json
 ---
 
@@ -289,7 +290,7 @@ No env vars. Runs on AWS Kafka Connect. Subscribes to `taxi-event-data`. Config 
 **Characteristics:**
 - All networking via `localhost` or Docker DNS
 - Ports exposed: 8080 (Nginx), 8081-8083 (ingestors), 9092/9094/9096 (Kafka), 8090 (UI), 8123/9000 (ClickHouse)
-- Flink compose not yet configured (placeholder vars only)
+- Flink: single-node JobManager + TaskManager, connects to Kafka and ClickHouse via Docker DNS
 - S3 connector connects from AWS to host Kafka EXTERNAL ports
 
 ### Version 2: Distributed (9 Machines)

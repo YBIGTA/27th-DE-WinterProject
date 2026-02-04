@@ -162,9 +162,14 @@ services:
 
 networks:
   kafka-network:
+<<<<<<< HEAD
     driver: bridge
 
 volumes:
   kafka1-data:
   kafka2-data:
   kafka3-data:
+=======
+    name: kafka-network
+    driver: bridge
+>>>>>>> origin/flink

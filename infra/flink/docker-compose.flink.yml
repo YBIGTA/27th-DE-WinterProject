@@ -6,7 +6,7 @@ services:
     container_name: flink-jobmanager
     command: jobmanager
     ports:
-      - "8081:8081"
+      - "${FLINK_JOBMANAGER_PORT:-8081}:8081"
     env_file:
       - ../../config/.env
     environment:
@@ -14,10 +14,10 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
         parallelism.default: 1
-      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:29092,kafka-2:29092,kafka-3:29092
-      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:9092,${KAFKA_2_IP}:9092,${KAFKA_3_IP}:9092
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
     networks:
-      - kafka-network
+      - flink-network
 
   flink-taskmanager:
     image: flink:1.17.2-scala_2.12
@@ -32,12 +32,11 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 2
-      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:29092,kafka-2:29092,kafka-3:29092
-      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:9092,${KAFKA_2_IP}:9092,${KAFKA_3_IP}:9092
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
     networks:
-      - kafka-network
+      - flink-network
 
 networks:
-  kafka-network:
-    external: true
-    name: kafka-network
+  flink-network:
+    driver: bridge

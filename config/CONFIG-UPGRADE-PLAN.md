@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS
+status: DONE
 created: 2026-02-04
 pipeline: generator → nginx → ingestor → kafka → (s3 sink connector → S3) / (flink → clickhouse)
 ---
@@ -58,12 +58,14 @@ CLICKHOUSE_IP       → Machine I
 | # | File | What | Status |
 |---|------|------|--------|
 | 1 | `config/.env.single-machine` | Rewrite: fix 3-broker kafka, add clickhouse + flink vars | Done |
-| 2 | `config/.env.distributed` | Strip redundant derived vars → keep registry IPs + constants only | TODO: strip |
-| 3 | `config/EXPLANATION.md` | Update docs: new pipeline, registry pattern, expanded tables | Done (needs re-check after strip) |
-| 4 | `config/README.md` | Update: one-step IP update procedure, nginx manual-edit note | Done (needs re-check after strip) |
-| 5 | `ingestor/docker-compose.ingestor-{1,2,3}.yml` | Add `environment:` deriving `SPRING_KAFKA_BOOTSTRAP_SERVERS` from `${KAFKA_*_IP}` | TODO |
-| 6 | `infra/kafka/docker-compose.kafka-{1,2,3}.yml` | Update `KAFKA_ADVERTISED_LISTENERS` + `KAFKA_CONTROLLER_QUORUM_VOTERS` to use `${KAFKA_*_IP}` | TODO |
-| 7 | `infra/kafka/docker-compose.kafka-ui.yml` | Add `env_file` + derive bootstrap servers from `${KAFKA_*_IP}` | TODO |
+| 2 | `config/.env.distributed` | Strip redundant derived vars → keep registry IPs + constants only | Done |
+| 3 | `config/EXPLANATION.md` | Update docs: new pipeline, registry pattern, expanded tables | Done |
+| 4 | `config/README.md` | Update: one-step IP update procedure, nginx manual-edit note | Done |
+| 5 | `ingestor/docker-compose.ingestor-{1,2,3}.yml` | Add `environment:` deriving `SPRING_KAFKA_BOOTSTRAP_SERVERS` from `${KAFKA_*_IP}` | Done |
+| 6 | `infra/kafka/docker-compose.kafka-{1,2,3}.yml` | Update `KAFKA_ADVERTISED_LISTENERS` + `KAFKA_CONTROLLER_QUORUM_VOTERS` to use `${KAFKA_*_IP}` | Done |
+| 7 | `infra/kafka/docker-compose.kafka-ui.yml` | Add `env_file` + derive bootstrap servers from `${KAFKA_*_IP}` | Done |
+| 8 | `infra/flink/docker-compose.yml` | LOCAL: add `env_file`, hardcode flink connection vars (kafka hostnames, clickhouse hostname) | Done |
+| 9 | `infra/flink/docker-compose.flink.yml` | DISTRIBUTED: new file, same JM+TM but derives `FLINK_KAFKA_BOOTSTRAP_SERVERS` from `${KAFKA_*_IP}` and `FLINK_CLICKHOUSE_HOST` from `${CLICKHOUSE_IP}` | Done |
 
 ---
 
@@ -74,21 +76,31 @@ CLICKHOUSE_IP       → Machine I
   - [x] Add ClickHouse section (`CLICKHOUSE_HOST`, `HTTP_PORT`, `NATIVE_PORT`, `DATABASE`, `TABLE`)
   - [x] Add Flink section (`FLINK_KAFKA_BOOTSTRAP_SERVERS`, `FLINK_CLICKHOUSE_*`, ports)
   - [x] Add S3 connector comment block (runs on AWS, points to `connectors/` template)
-- [ ] Strip `.env.distributed` — remove redundant derived vars, keep only:
-  - Instance registry IPs
-  - Constants: `APP_KAFKA_TOPIC`, ports (`KAFKA_INTERNAL_PORT`, `KAFKA_CONTROLLER_PORT`, `NGINX_LB_PORT`, `INGESTOR_PORT`, `KAFKA_UI_PORT`, `FLINK_JOBMANAGER_PORT`, `FLINK_TASKMANAGER_SLOTS`), db/table (`CLICKHOUSE_DATABASE`, `CLICKHOUSE_TABLE`, `FLINK_CLICKHOUSE_DATABASE`, `FLINK_CLICKHOUSE_TABLE`, ports `CLICKHOUSE_HTTP_PORT`, `CLICKHOUSE_NATIVE_PORT`, `FLINK_CLICKHOUSE_PORT`)
-  - `INGEST_URL` (generator only reads this; always localhost — nginx co-located)
-  - Remove: `SPRING_KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_BOOTSTRAP_SERVERS_*`, `NGINX_UPSTREAM_*`, `KAFKA_ADVERTISED_LISTENERS_*`, `KAFKA_CONTROLLER_QUORUM_VOTERS`, `KAFKA_UI_BOOTSTRAP_SERVERS`, `FLINK_KAFKA_BOOTSTRAP_SERVERS`, `FLINK_CLICKHOUSE_HOST`, `CLICKHOUSE_HOST`, `KAFKA_{1,2,3}_EXTERNAL_PORT`
-- [ ] Update per-ingestor compose files (`ingestor/docker-compose.ingestor-{1,2,3}.yml`)
-  - Add `environment:` block deriving `SPRING_KAFKA_BOOTSTRAP_SERVERS` and `APP_KAFKA_TOPIC` from `${KAFKA_*_IP}`
-- [ ] Update per-broker kafka compose files (`infra/kafka/docker-compose.kafka-{1,2,3}.yml`)
-  - Replace hardcoded `KAFKA_ADVERTISED_LISTENERS` with `${KAFKA_N_IP}` references
-  - Replace hardcoded `KAFKA_CONTROLLER_QUORUM_VOTERS` with `${KAFKA_*_IP}` references
-- [ ] Update kafka-ui compose (`infra/kafka/docker-compose.kafka-ui.yml`)
-  - Add `env_file: ../../config/.env`
-  - Derive `KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS` from `${KAFKA_*_IP}`
-- [x] Update `EXPLANATION.md` (done — revisit after strip + compose changes)
-- [x] Update `README.md` (done — revisit after strip + compose changes)
+- [x] Strip `.env.distributed` — registry IPs + constants only
+- [x] Update per-ingestor compose files (`ingestor/docker-compose.ingestor-{1,2,3}.yml`)
+  - Added `environment:` deriving `SPRING_KAFKA_BOOTSTRAP_SERVERS` and `APP_KAFKA_TOPIC` from `${KAFKA_*_IP}`
+- [x] Update per-broker kafka compose files (`infra/kafka/docker-compose.kafka-{1,2,3}.yml`)
+  - Replaced hardcoded `KAFKA_ADVERTISED_LISTENERS` with `${KAFKA_N_IP}` references
+  - Replaced hardcoded `KAFKA_CONTROLLER_QUORUM_VOTERS` with `${KAFKA_*_IP}` references
+  - Fixed kafka-2/kafka-3 port mappings to `9092:9092` (one broker per machine in distributed)
+- [x] Update kafka-ui compose (`infra/kafka/docker-compose.kafka-ui.yml`)
+  - Added `env_file` + derives `KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS` from `${KAFKA_*_IP}`
+- [x] Update `EXPLANATION.md` — tables, design decisions, operational procedures all updated
+- [x] Update `README.md` — one-step IP update procedure documented
+- [x] Update flink LOCAL compose (`infra/flink/docker-compose.yml`)
+  - Added `env_file: ../../config/.env` to jobmanager + taskmanager
+  - Added hardcoded connection env vars for local mode:
+    - `FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:29092,kafka-2:29092,kafka-3:29092`
+    - `FLINK_CLICKHOUSE_HOST=clickhouse`
+  - Kept existing FLINK_PROPERTIES as-is
+- [x] Create flink DISTRIBUTED compose (`infra/flink/docker-compose.flink.yml`)
+  - Same JM + TM structure as local compose
+  - `env_file: ../../config/.env`
+  - `environment:` derives connection vars from instance registry:
+    - `FLINK_KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_1_IP}:9092,${KAFKA_2_IP}:9092,${KAFKA_3_IP}:9092"`
+    - `FLINK_CLICKHOUSE_HOST: "${CLICKHOUSE_IP}"`
+  - Other FLINK_* constants (`FLINK_KAFKA_TOPIC`, `FLINK_CLICKHOUSE_PORT`, etc.) come through via env_file
+- [x] Run verification checks
 
 ---
 
