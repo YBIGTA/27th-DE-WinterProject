@@ -7,35 +7,32 @@ services:
     env_file:
       - ../../../config/.env
     ports:
-      - "9092:9092"
-      - "29092:29092"
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
+      - "${KAFKA_INTERNAL_PORT:-29092}:29092"
     environment:
       KAFKA_NODE_ID: 3
       KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@${KAFKA_1_IP}:19093,2@${KAFKA_2_IP}:19093,3@${KAFKA_3_IP}:19093"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@${KAFKA_1_IP}:${KAFKA_CONTROLLER_PORT:-19093},2@${KAFKA_2_IP}:${KAFKA_CONTROLLER_PORT:-19093},3@${KAFKA_3_IP}:${KAFKA_CONTROLLER_PORT:-19093}"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_LISTENERS: "EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:19093"
-      KAFKA_ADVERTISED_LISTENERS: "EXTERNAL://${KAFKA_3_IP}:9092,INTERNAL://${KAFKA_3_IP}:29092"
+      KAFKA_LISTENERS: "EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:${KAFKA_INTERNAL_PORT:-29092},CONTROLLER://0.0.0.0:${KAFKA_CONTROLLER_PORT:-19093}"
+      KAFKA_ADVERTISED_LISTENERS: "EXTERNAL://${KAFKA_3_IP}:${KAFKA_EXTERNAL_PORT:-9092},INTERNAL://${KAFKA_3_IP}:${KAFKA_INTERNAL_PORT:-29092}"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
 
       CLUSTER_ID: "MkU3OEVCNTcwNTJENDM2Qk"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
-
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-
-      KAFKA_COMPRESSION_TYPE: "lz4"
-      KAFKA_LOG_RETENTION_HOURS: 24
-      KAFKA_LOG_SEGMENT_BYTES: 1073741824
-      KAFKA_NUM_PARTITIONS: 4
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        awk -F': *' '/^[A-Z0-9_]+:/{v=$2; gsub(/^"|"$/, "", v); print $1 "=\"" v "\""}' /config/default.yaml > /tmp/kafka_runtime.env
+        set -a
+        . /tmp/kafka_runtime.env
+        set +a
+        exec /etc/confluent/docker/run
 
     volumes:
+      - ../../../infra/kafka/config/default.yaml:/config/default.yaml:ro
       - kafka3-data:/var/lib/kafka/data
     networks:
       - kafka-network

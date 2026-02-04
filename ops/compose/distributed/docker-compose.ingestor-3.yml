@@ -7,8 +7,10 @@ services:
     env_file:
       - ../../../config/.env
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_1_IP}:9092,${KAFKA_2_IP}:9092,${KAFKA_3_IP}:9092"
-      APP_KAFKA_TOPIC: "${APP_KAFKA_TOPIC}"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_1_IP}:${KAFKA_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_EXTERNAL_PORT:-9092},${KAFKA_3_IP}:${KAFKA_EXTERNAL_PORT:-9092}"
+      SERVER_PORT: "${INGESTOR_PORT:-8080}"
+    volumes:
+      - ../../../services/ingestor/config/default.yaml:/app/config/default.yaml:ro
     ports:
       - "${INGESTOR_3_PORT:-8080}:${INGESTOR_PORT:-8080}"
     restart: unless-stopped

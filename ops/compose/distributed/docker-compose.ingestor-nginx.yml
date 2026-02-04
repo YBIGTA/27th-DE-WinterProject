@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  nginx-lb:
+    image: nginx:alpine
+    container_name: ingestor-lb
+    env_file:
+      - ../../../config/.env
+    ports:
+      - "${NGINX_LB_PORT:-8080}:80"
+    volumes:
+      - ../../../infra/nginx/config/default.yaml:/config/default.yaml:ro
+      - ../../../infra/nginx/templates/nginx.distributed.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+    command: >
+      sh -c "awk -F': *' '/^[A-Z0-9_]+:/{v=$2; gsub(/^\"|\"$/, \"\", v); print $1 \"=\\\"\" v \"\\\"\"}' /config/default.yaml > /tmp/nginx_runtime.env;
+      set -a;
+      . /tmp/nginx_runtime.env;
+      set +a;
+      envsubst '$$INGESTOR_1_IP $$INGESTOR_2_IP $$INGESTOR_3_IP $$INGESTOR_PORT $$NGINX_DM_WORKER_CONNECTIONS $$NGINX_DM_PROXY_CONNECT_TIMEOUT $$NGINX_DM_PROXY_SEND_TIMEOUT $$NGINX_DM_PROXY_READ_TIMEOUT $$NGINX_DM_PROXY_BUFFERING $$NGINX_DM_PROXY_BUFFER_SIZE $$NGINX_DM_PROXY_BUFFERS $$NGINX_DM_PROXY_BUSY_BUFFERS_SIZE'
+      < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf;
+      exec nginx -g 'daemon off;'"
+    restart: unless-stopped
