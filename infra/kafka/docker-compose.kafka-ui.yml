@@ -4,11 +4,13 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    env_file:
+      - ../../config/.env
     ports:
-      - "8090:8080"
+      - "${KAFKA_UI_PORT:-8090}:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: "kafka-cluster"
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "${KAFKA_1_IP}:9092,${KAFKA_2_IP}:9092,${KAFKA_3_IP}:9092"
     networks:
       - kafka_kafka-network
     restart: unless-stopped
