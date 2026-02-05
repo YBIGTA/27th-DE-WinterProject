@@ -71,3 +71,6 @@ Thumbs.db
 # Keep template files
 !config/.env.single-machine
 !config/.env.distributed
+
+# claude
+.claude
