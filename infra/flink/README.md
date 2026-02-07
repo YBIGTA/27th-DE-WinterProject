@@ -13,22 +13,19 @@ cp config/.env.single-machine config/.env
 # distributed는 .env.distributed를 복사 후 실제 IP/PORT 반영
 ```
 
-## Flink 컨테이너 시작
+## Job 빌드 & 실행 (Application Mode)
+
+Job JAR을 이미지에 포함시켜 `docker compose up` 시 자동으로 Job이 시작된다.
+
 ```bash
-# single-machine
-docker compose -f infra/flink/docker-compose.yml --env-file config/.env up
+# 1. JAR 빌드 (최초 또는 코드 변경 시)
+cd services/flink-job && mvn clean package && cd ../..
+
+# 2. single-machine — 이미지 빌드 + 컨테이너 시작 (Job 자동 실행)
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
 
 # distributed
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d flink-jobmanager flink
-```
-
-## Job 빌드/배포
-```bash
-cd services/flink-job
-mvn clean package
-
-docker cp target/flink-kafka-print-0.1.0.jar flink-jobmanager:/opt/flink/usrlib/
-docker exec flink-jobmanager flink run -c com.example.TaxiRealtimeJob /opt/flink/usrlib/flink-kafka-print-0.1.0.jar
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build -d flink-jobmanager flink
 ```
 
 ## 확인
