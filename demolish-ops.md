@@ -21,7 +21,7 @@ progress:
 4. Keep `config/.env` as the only shared source for network values (`*_IP`, `*_PORT`).
 5. Hardcode non-network runtime values directly in compose `environment` blocks.
 
-## Current state (from `PHASE2-REFINEMENT.md` + repo scan)
+## Current state (from repo scan)
 1. Compose entrypoints are centralized in `ops/compose/{single-machine,distributed}` and split across many files.
 2. Runtime YAML is currently used by Kafka, ClickHouse, Ingestor, Flink (and Generator natively).
 3. Some distributed network wiring is already known to be broken (Kafka network declaration, Flink network isolation, missing ingestor networks).

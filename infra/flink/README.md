@@ -16,7 +16,7 @@ cp config/.env.single-machine config/.env
 ## Flink 컨테이너 시작
 ```bash
 # single-machine
-docker compose -f infra/flink/docker-compose.yml --env-file config/.env up -d flink-jobmanager flink
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env up
 
 # distributed
 docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d flink-jobmanager flink

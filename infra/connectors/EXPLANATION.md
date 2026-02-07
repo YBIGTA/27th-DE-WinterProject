@@ -3,7 +3,6 @@ component: Kafka Connect S3 Sink
 status: CURRENT
 last_reviewed: 2026-02-02
 core_files:
-  - infra/connectors/s3-sink-config.json
   - infra/connectors/s3-sink-config.template.json
   - infra/connectors/README.md
 ---

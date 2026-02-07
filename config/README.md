@@ -26,7 +26,7 @@
 프로젝트 루트에서 아래 패턴 사용:
 
 ```bash
-docker compose -f <component-compose-file> --env-file config/.env up -d <service...>
+docker compose -f <component-compose-file> --env-file config/.env up
 ```
 
 ## 1) Single-machine
@@ -36,17 +36,17 @@ docker compose -f <component-compose-file> --env-file config/.env up -d <service
 cp config/.env.single-machine config/.env
 
 # 1. Kafka
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3 kafka-ui
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
 
 # 2. ClickHouse
-docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d clickhouse
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
 
 # 3. Ingestor + Nginx
-docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
-docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up -d nginx-lb
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up
+docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up
 
 # 4. Flink
-docker compose -f infra/flink/docker-compose.yml --env-file config/.env up -d flink-jobmanager flink
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env up
 
 # 5. Generator (native)
 cd services/generator && ./build/generate

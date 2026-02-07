@@ -39,7 +39,7 @@ core_files:
 | Nginx (DM) | `infra/nginx/templates/nginx.distributed.conf.template` | `envsubst` for `.env` IP/PORT only |
 | Ingestor | `services/ingestor/docker-compose.*.yml` | Spring properties via env (`APP_*`, `SPRING_*`) |
 | Flink | `infra/flink/docker-compose.*.yml` | Job config via env (`FLINK_*`) |
-| Generator | `services/generator/config/default.yaml` | native C++ YAML parser (`generate.cpp`) |
+| Generator | `services/generator/config/default.yaml` | native C++ YAML parser (`services/generator/generate.cpp`) |
 
 ## Compose 변수 치환 주의
 분산 모드 `${KAFKA_1_IP}` 같은 값은 compose 파싱 시점 치환값이다.

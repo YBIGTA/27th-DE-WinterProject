@@ -16,7 +16,7 @@ cp config/.env.single-machine config/.env
 ## 실행
 ```bash
 # single-machine
-docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d clickhouse
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
 
 # distributed
 docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse

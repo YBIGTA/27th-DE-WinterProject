@@ -228,10 +228,15 @@ struct DateRange {
     int end_month;
 };
 
+static constexpr const char* DEFAULT_DATA_PATH = "../../data/taxi_data_preprocessed";
+static constexpr const char* DEFAULT_ENV_PATH = "../../config/.env";
+static constexpr const char* DEFAULT_ZONE_CSV_PATH = "../../data/taxi_zones/taxi_zone_median_coords.csv";
+static constexpr const char* DEFAULT_CONFIG_PATH = "config/default.yaml";
+
 struct SimulationConfig {
     double playback_speed = 100.0;
     DateRange range{2020, 1, 2024, 4};
-    string data_path = "../data/taxi_data_preprocessed";
+    string data_path = DEFAULT_DATA_PATH;
     string ingestion_url = "http://localhost:8080/ingest";
     bool debug_timing = false;  // NEW: Enable timing debug logs
 
@@ -448,7 +453,7 @@ static string resolve_ingestion_url_from_env() {
 
 static SimulationConfig load_config(const string& path) {
     // Load .env file first
-    load_env_file("../../config/.env");
+    load_env_file(DEFAULT_ENV_PATH);
 
     SimulationConfig config;
     ifstream file(path);
@@ -1234,7 +1239,7 @@ private:
     }
 
 public:
-    explicit GeoService(const string& csv_path = "../data/taxi_zones/taxi_zone_median_coords.csv") {
+    explicit GeoService(const string& csv_path = DEFAULT_ZONE_CSV_PATH) {
         if (!load_from_csv(csv_path)) {
             location_map[142] = {40.7711, -73.9841};
             location_map[230] = {40.7629, -73.9860};
@@ -2372,7 +2377,7 @@ private:
 // ==========================================
 
 int main(int argc, char** argv) {
-    string config_path = "config/default.yaml";
+    string config_path = DEFAULT_CONFIG_PATH;
     if (argc > 1) {
         config_path = argv[1];
     }

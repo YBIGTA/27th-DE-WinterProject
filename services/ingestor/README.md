@@ -16,13 +16,13 @@ cp config/.env.single-machine config/.env
 ## Single-machine 기동
 ```bash
 # Kafka 먼저
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
 
 # Ingestor 3개
-docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up
 
 # Nginx LB
-docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up -d nginx-lb
+docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up
 ```
 
 ## Distributed 기동

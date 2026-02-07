@@ -72,9 +72,6 @@ services:
     networks:
       - kafka-network
     restart: unless-stopped
-    depends_on:
-      kafka-1:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
       interval: 10s
@@ -115,9 +112,6 @@ services:
     networks:
       - kafka-network
     restart: unless-stopped
-    depends_on:
-      kafka-1:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
       interval: 10s

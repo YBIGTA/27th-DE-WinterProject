@@ -28,7 +28,7 @@ Reliable, scalable, fault-tolerant data pipeline simulation project.
 1. 실행/운영: `config/README.md`
 2. 설정 구조: `config/EXPLANATION.md`
 3. 컴포넌트별 매핑: `config/COMPONENT-CONFIGS.md`
-4. 리팩토링 이력: `REFACTORING.md`
+4. 리팩토링 이력: `demolish-ops.md`, `merge-issue.md`
 
 ## 실행 원칙
 1. `config/.env`는 IP/PORT만 관리한다.
@@ -39,16 +39,49 @@ Reliable, scalable, fault-tolerant data pipeline simulation project.
 ```bash
 cp config/.env.single-machine config/.env
 
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3 kafka-ui
-docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d clickhouse
-docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
-docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up -d nginx-lb
-docker compose -f infra/flink/docker-compose.yml --env-file config/.env up -d flink-jobmanager flink
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up
+docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env up
 ```
 
 ## Environment
-- JDK 21
+- flink-job: JDK 11 (Flink 1.17.2 requirement)
+- ingestor: JDK 17 (Spring Boot 3.2 requirement)
+- generator: C++ (Conan + CMake)
 - Python: `uv`
-- C++ build: Conan + CMake
+- Local dev: JDK 17+ recommended
 
 Python `uv` workspace files are in `data/` (`data/pyproject.toml`, `data/uv.lock`).
+
+## Build Notes
+
+### flink-job (services/flink-job)
+```bash
+cd services/flink-job
+mvn clean package
+```
+
+**Version Compatibility:**
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Flink runtime | 1.17.2 | Docker image: `flink:1.17.2-scala_2.12` |
+| Target bytecode | Java 11 | Matches Flink 1.17.2 runtime |
+| flink-connector-jdbc | 3.1.1-1.17 | Must match Flink version (not 1.18) |
+| flink-connector-kafka | 1.17.2 | Must match Flink version |
+| Lombok | 1.18.30+ | Required if building with JDK 21+ |
+
+**Common Issues:**
+- `NoSuchFieldError: JCTree$JCImport` → Lombok version too old for your JDK. Upgrade Lombok.
+- `ClassNotFoundException` at runtime → Connector version mismatch with Flink runtime.
+
+### ingestor (services/ingestor)
+```bash
+cd services/ingestor
+./gradlew build
+# or via Docker
+docker build -t ingestor .
+```
+
+Requires JDK 17+ (Spring Boot 3.2).

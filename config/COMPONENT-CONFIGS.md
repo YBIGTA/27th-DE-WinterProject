@@ -12,7 +12,7 @@ Status: `CURRENT`
 |---|---|---|
 | Kafka | `infra/kafka/docker-compose.*.yml` | compose `environment` (hardcoded tuning) |
 | ClickHouse | `infra/clickhouse/docker-compose.*.yml` | compose `environment` + schema mount |
-| Nginx (SM) | `infra/nginx/docker-compose.yml` | static `nginx.single-machine.conf` |
+| Nginx (SM) | `infra/nginx/docker-compose.yml` | static `infra/nginx/nginx.single-machine.conf` |
 | Nginx (DM) | `infra/nginx/docker-compose.distributed.yml` | template + `.env` IP/PORT envsubst |
 | Ingestor | `services/ingestor/docker-compose.*.yml` | compose `environment` (`APP_*`, `SPRING_*`) |
 | Flink | `infra/flink/docker-compose.*.yml` | compose `environment` (`FLINK_*`) |

@@ -18,7 +18,7 @@ cp config/.env.single-machine config/.env
 
 ## Single-machine 실행
 ```bash
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3 kafka-ui
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
 ```
 
 ## Distributed 실행 (머신별)
