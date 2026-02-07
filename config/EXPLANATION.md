@@ -47,7 +47,7 @@ core_files:
 
 정상 패턴:
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-1
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-1
 ```
 
 ## Invariants

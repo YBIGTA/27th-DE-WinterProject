@@ -58,24 +58,25 @@ cd services/generator && ./build/generate
 # 0. 템플릿 활성화
 cp config/.env.distributed config/.env
 # 이후 config/.env에 실제 IP/PORT 입력
+# 모든 compose 명령은 포그라운드 실행이므로 머신/서비스마다 별도 터미널에서 실행
 
 # Kafka 머신들
 # machine-1
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-1
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-1
 # machine-2
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-2
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-2
 # machine-3
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-3 kafka-ui
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-3 kafka-ui
 
 # ClickHouse 머신
-docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up clickhouse
 
 # Ingestor/Nginx 머신
-docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
-docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up -d nginx-lb
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up ingestor-1 ingestor-2 ingestor-3
+docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up nginx-lb
 
 # Flink 머신
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d flink-jobmanager flink
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up flink-jobmanager flink
 
 # Generator (native)
 cd services/generator && ./build/generate

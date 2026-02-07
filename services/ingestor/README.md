@@ -26,8 +26,9 @@ docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up
 ```
 
 ## Distributed 기동
+포그라운드 실행 기준이므로 해당 터미널을 유지한다.
 ```bash
-docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up -d ingestor-1 ingestor-2 ingestor-3
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up ingestor-1 ingestor-2 ingestor-3
 ```
 
 ## 상태/로그

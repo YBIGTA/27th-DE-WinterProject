@@ -517,7 +517,8 @@ Sends JSON array of 1-200 events to `/ingest/batch`:
 
 # Test 2: Backpressure (429s)
 # Modify ingestor buffer to 100 events
-docker compose up -d
+# 별도 터미널에서 포그라운드 실행
+docker compose up
 ./build/generate
 # Expected: [RATE_LIMIT] messages, gradual slowdown
 

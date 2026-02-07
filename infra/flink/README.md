@@ -25,7 +25,7 @@ cd services/flink-job && mvn clean package && cd ../..
 docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
 
 # distributed
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build -d flink-jobmanager flink
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager flink
 ```
 
 ## 확인

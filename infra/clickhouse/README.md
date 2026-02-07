@@ -14,12 +14,13 @@ cp config/.env.single-machine config/.env
 ```
 
 ## 실행
+모든 compose 실행은 포그라운드 기준이다.
 ```bash
 # single-machine
 docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
 
 # distributed
-docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up clickhouse
 ```
 
 ## 헬스체크

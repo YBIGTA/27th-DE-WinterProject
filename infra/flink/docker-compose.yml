@@ -23,6 +23,8 @@ services:
       - FLINK_JDBC_BATCH_SIZE=5000
       - FLINK_JDBC_BATCH_INTERVAL_MS=5000
       - FLINK_KAFKA_TOPIC=taxi-event-data
+      - FLINK_KAFKA_GROUP_ID=${FLINK_KAFKA_GROUP_ID:-taxi-realtime-flink}
+      - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
     networks:
@@ -51,6 +53,8 @@ services:
       - FLINK_JDBC_BATCH_SIZE=5000
       - FLINK_JDBC_BATCH_INTERVAL_MS=5000
       - FLINK_KAFKA_TOPIC=taxi-event-data
+      - FLINK_KAFKA_GROUP_ID=${FLINK_KAFKA_GROUP_ID:-taxi-realtime-flink}
+      - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
     networks:

@@ -22,15 +22,16 @@ docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
 ```
 
 ## Distributed 실행 (머신별)
+각 명령은 포그라운드 실행이므로 머신별 터미널에서 유지한다.
 ```bash
 # machine-1
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-1
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-1
 
 # machine-2
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-2
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-2
 
 # machine-3
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-3 kafka-ui
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-3 kafka-ui
 ```
 
 ## 상태 확인
