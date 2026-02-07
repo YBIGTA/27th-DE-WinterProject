@@ -13,8 +13,8 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
         parallelism.default: 1
-      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
-      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
       - FLINK_PARALLELISM=1
       - FLINK_TASKMANAGER_SLOTS=2
@@ -25,8 +25,6 @@ services:
       - FLINK_KAFKA_TOPIC=taxi-event-data
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
-    networks:
-      - kafka-network
 
   flink:
     image: flink-taxi-job:latest
@@ -41,8 +39,8 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 2
-      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
-      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
       - FLINK_PARALLELISM=1
       - FLINK_TASKMANAGER_SLOTS=2
@@ -53,10 +51,3 @@ services:
       - FLINK_KAFKA_TOPIC=taxi-event-data
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
-    networks:
-      - kafka-network
-
-networks:
-  kafka-network:
-    external: true
-    name: kafka-network

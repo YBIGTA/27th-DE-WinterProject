@@ -1,0 +1,83 @@
+services:
+  ingestor-1:
+    build: .
+    container_name: ingestor-1
+    env_file:
+      - ../../config/.env
+    ports:
+      - "${INGESTOR_1_PORT:-8081}:${INGESTOR_PORT:-8080}"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}"
+      SERVER_PORT: "${INGESTOR_PORT:-8080}"
+      APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_TUNING_BUFFER_SIZE: 10000
+      APP_TUNING_BATCH_SIZE: 500
+      APP_TUNING_BATCH_TIMEOUT_MS: 50
+      APP_TUNING_KAFKA_SEND_CONCURRENCY: 4
+      APP_TUNING_METRICS_INTERVAL_SEC: 10
+    networks:
+      - kafka-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  ingestor-2:
+    build: .
+    container_name: ingestor-2
+    env_file:
+      - ../../config/.env
+    ports:
+      - "${INGESTOR_2_PORT:-8082}:${INGESTOR_PORT:-8080}"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}"
+      SERVER_PORT: "${INGESTOR_PORT:-8080}"
+      APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_TUNING_BUFFER_SIZE: 10000
+      APP_TUNING_BATCH_SIZE: 500
+      APP_TUNING_BATCH_TIMEOUT_MS: 50
+      APP_TUNING_KAFKA_SEND_CONCURRENCY: 4
+      APP_TUNING_METRICS_INTERVAL_SEC: 10
+    networks:
+      - kafka-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  ingestor-3:
+    build: .
+    container_name: ingestor-3
+    env_file:
+      - ../../config/.env
+    ports:
+      - "${INGESTOR_3_PORT:-8083}:${INGESTOR_PORT:-8080}"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}"
+      SERVER_PORT: "${INGESTOR_PORT:-8080}"
+      APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_TUNING_BUFFER_SIZE: 10000
+      APP_TUNING_BATCH_SIZE: 500
+      APP_TUNING_BATCH_TIMEOUT_MS: 50
+      APP_TUNING_KAFKA_SEND_CONCURRENCY: 4
+      APP_TUNING_METRICS_INTERVAL_SEC: 10
+    networks:
+      - kafka-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+networks:
+  kafka-network:
+    external: true
+    name: kafka-network

@@ -1,0 +1,35 @@
+# Generator config (defaults aligned with prior CLI usage)
+# In distributed mode, .env (NGINX_IP + NGINX_LB_PORT) overrides ingestion_url.
+
+date_range:
+  start: "2020-01"
+  end: "2020-12"
+
+playback:
+  speed: 300
+
+ingestion_url: "http://localhost:8080/ingest"
+
+debug_timing: false
+
+rate_limit:
+  threshold: 0.10
+  max_delay_ms: 5000
+
+circuit_breaker:
+  threshold: 0.50
+  min_requests: 20
+  timeout_sec: 30
+
+connection:
+  max_failures: 3
+
+retry:
+  max_retries: 3
+
+dlq:
+  filepath: "dead_letter_queue.jsonl"
+
+batch:
+  size: 200
+  timeout_ms: 100

@@ -1,274 +1,77 @@
 ---
 component: Environment-Based Deployment Configuration System
 status: CURRENT
-last_reviewed: 2026-02-03
+last_reviewed: 2026-02-04
+pipeline: generator -> nginx -> ingestor -> kafka -> (s3 sink connector -> S3) / (flink -> clickhouse)
 core_files:
   - config/.env.single-machine
   - config/.env.distributed
-  - generator/generate.cpp (load_env_file)
-  - ingestor/docker-compose.yml
-  - ingestor/docker-compose.ingestor-{1,2,3}.yml
-  - ingestor/docker-compose.nginx.yml
-  - ingestor/nginx.distributed.conf
+  - config/README.md
   - infra/kafka/docker-compose.yml
+  - infra/kafka/docker-compose.distributed.yml
+  - infra/clickhouse/docker-compose.yml
+  - infra/clickhouse/docker-compose.distributed.yml
+  - services/ingestor/docker-compose.yml
+  - services/ingestor/docker-compose.distributed.yml
+  - infra/nginx/docker-compose.yml
+  - infra/nginx/docker-compose.distributed.yml
+  - infra/flink/docker-compose.yml
+  - infra/flink/docker-compose.distributed.yml
 ---
 
-# Environment-Based Deployment Configuration System
+# Environment-Based Config System
 
-## Role
-Enable two fundamentally different deployment topologies (single-machine vs 5-machine distributed) from a single codebase using file-based environment variable templates.
+## 목표
+하나의 코드베이스로 single-machine / distributed를 모두 지원하면서,
+설정 책임을 네트워크와 런타임 튜닝으로 분리한다.
 
-## I/O Flow
-```
-[config/.env.single-machine OR config/.env.distributed]
-                    |
-                    | manual cp → config/.env
-                    ↓
-             [config/.env] --(Parse)--> [Runtime Components]
-                                        ├─ Generator (C++ setenv)
-                                        ├─ Ingestors (Docker env_file)
-                                        ├─ Kafka (Docker env_file)
-                                        └─ Nginx (Docker env_file)
-```
+## 규칙
+1. `config/.env`는 `*_IP`, `*_PORT`만 유지
+2. 배포 서비스의 non-network 설정은 compose `environment`에 하드코딩
+3. compose 실행 시 `--env-file config/.env` 명시
 
-## Implementation Logic
+## Runtime wiring
+| Component | Runtime config load path | 방식 |
+|---|---|---|
+| Kafka | `infra/kafka/docker-compose.*.yml` | broker tuning values are hardcoded in compose environment |
+| ClickHouse | `infra/clickhouse/docker-compose.*.yml` | runtime env in compose (`TZ`) + schema mount |
+| Nginx (SM) | `infra/nginx/nginx.single-machine.conf` | static mount |
+| Nginx (DM) | `infra/nginx/templates/nginx.distributed.conf.template` | `envsubst` for `.env` IP/PORT only |
+| Ingestor | `services/ingestor/docker-compose.*.yml` | Spring properties via env (`APP_*`, `SPRING_*`) |
+| Flink | `infra/flink/docker-compose.*.yml` | Job config via env (`FLINK_*`) |
+| Generator | `services/generator/config/default.yaml` | native C++ YAML parser (`services/generator/generate.cpp`) |
 
-### Data Flow
-```mermaid
-flowchart TD
-    A[".env.single-machine (local)"] --> C["cp → config/.env"]
-    B[".env.distributed (example)"] --> C
+## Compose 변수 치환 주의
+분산 모드 `${KAFKA_1_IP}` 같은 값은 compose 파싱 시점 치환값이다.
+서비스 `env_file:`만으로는 치환 시점이 보장되지 않는다.
 
-    C --> F[Generator reads ../config/.env]
-    C --> G[Docker Compose reads env_file]
-
-    F --> H[load_env_file parses]
-    H --> I[setenv injects to process]
-    I --> J[getenv INGEST_URL at runtime]
-
-    G --> K["Docker substitutes ${VAR}"]
-    K --> L[Container env vars]
-    L --> M[Spring Boot reads SPRING_KAFKA_BOOTSTRAP_SERVERS]
-```
-
-### Concurrency Model
-- **Thread Model:** N/A (Configuration loading only)
-- **Shared State:** File system (.env file) - read-only after copy
-- **Sync Primitives:** None required
-- **Mutability:** Immutable after process startup
-  - Generator: Loads once at main() entry via load_env_file()
-  - Docker: Reads once at container creation
-  - Changes require restart
-
-### Core Algorithm
-
-#### 1. Template Copy (manual)
+정상 패턴:
 ```bash
-# Local pipeline
-cp config/.env.single-machine .env
-
-# Distributed pipeline (edit IPs first, see .env.distributed as reference)
-cp config/.env.distributed .env
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-1
 ```
-**Note:** `.env.distributed` is a reference example only. The actual distributed env with real IPs is managed per-environment and must not be committed.
 
-#### 2. Generator Parsing (generate.cpp:294-321)
-```cpp
-load_env_file("../config/.env");  // Relative to generator/ CWD
-  ↓ For each line:
-  ↓   Skip if empty or starts with '#'
-  ↓   Parse KEY=VALUE
-  ↓   Strip quotes from VALUE
-  ↓   setenv(KEY, VALUE, 0)  // 0 = don't overwrite existing
-```
-**Priority:** Shell env > .env file > Application defaults
+## Invariants
+1. `config/.env`에는 `*_IP`, `*_PORT`만 존재
+2. distributed에서는 모든 머신이 동일한 `config/.env` 사용
+3. Ingestor/Flink topic 일치
+4. Flink ClickHouse target(`database.table`)은 `infra/clickhouse/schema.sql`와 일치
 
-Key usage:
-- `INGEST_URL` → HTTP endpoint for sending events (generate.cpp:331, 392)
-
-#### 3. Docker Env File Loading
-```yaml
-services:
-  ingestor-1:
-    env_file: ../config/.env
-    environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${SPRING_KAFKA_BOOTSTRAP_SERVERS}
-```
-**Mechanism:**
-1. Docker reads `../config/.env` before container start
-2. Substitutes `${VAR}` placeholders in `environment:` section
-3. Passes final values as container environment variables
-
-Key variables consumed:
-- `SPRING_KAFKA_BOOTSTRAP_SERVERS` → Kafka broker address (Ingestors)
-- `KAFKA_ADVERTISED_LISTENERS` → External/internal listeners (Kafka)
-- `NGINX_LB_PORT`, `INGESTOR_*_PORT` → Port mappings
-
-## Data Contract
-
-### Input Format (.env files)
+## Operational checks
 ```bash
-# Comments allowed
-KEY=VALUE
-KEY_WITH_QUOTES="value with spaces"  # Quotes stripped by generator parser
-KEY_NUMERIC=8080
-KEY_LIST=server1:9092,server2:9092  # Application parses
+# network-only 확인
+awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/{print $1}' config/.env | rg -v '(_IP|_PORT)$'
+
+# compose 파싱 검증
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env config >/dev/null
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env config >/dev/null
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env config >/dev/null
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env config >/dev/null
 ```
 
-### Configuration Variables
-
-| Variable | Type | Version 1 | Version 2 | Consumer |
-|----------|------|-----------|-----------|----------|
-| `INGEST_URL` | URL | `http://localhost:8080/ingest` | `http://localhost:8080/ingest` | Generator |
-| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Hostport | `kafka:29092` | `192.168.1.50:9092` | Ingestors |
-| `KAFKA_ADVERTISED_LISTENERS` | List | `...localhost:9092...` | `...192.168.1.50:9092...` | Kafka |
-| `NGINX_UPSTREAM_*` | Hostport | `ingestor-*:8080` | `192.168.1.*:8080` | Nginx (manual edit) |
-
-### Invariants
-1. **Network Reachability:**
-   - V1: All services on `localhost` or Docker network names
-   - V2: All IPs must be on same L2/L3 network segment
-2. **Port Uniqueness:**
-   - V1: External ports (8080-8083, 9092, 8090) must not conflict
-   - V2: Same port (8080) can be reused across machines
-3. **Kafka Listener Consistency:**
-   - `KAFKA_ADVERTISED_LISTENERS` must match client-facing network
-   - `INTERNAL` listener for Docker network, `EXTERNAL` for host network
-
-## Design Decisions
-
-| Decision | Why | Trade-off |
-|----------|-----|-----------|
-| **File-based templates** (vs centralized config server) | Zero dependencies, works offline, version controlled | Manual propagation to 5 machines in V2 |
-| **Manual cp** (vs symlinks or scripts) | Simple, no tooling to maintain, works across OS | Must remember to copy before starting services |
-| **Separate compose files** for V2 (vs overrides) | Clear separation, no conditional logic, deploy per-machine | More files to maintain (5 docker-compose files) |
-| **C++ native parser** (vs libdotenv) | No external dependency, 30 LOC | Custom implementation, no advanced features (variable expansion) |
-| **env_file + environment** (vs only env_file) | Explicit variable mapping, validation via Docker | Redundancy, must list variables twice |
-| **Hardcoded IPs in nginx.distributed.conf** | Nginx doesn't support env var substitution in upstream | Manual edit required before V2 deployment |
-
-## Deployment Topologies
-
-### Version 1: Single Machine
-```
-┌─────────────────────────────────────────┐
-│  Host Machine (localhost)               │
-│  ┌─────────────────────────────────┐    │
-│  │  Docker Network (kafka-network) │    │
-│  │  ┌──────┐  ┌──────────────┐     │    │
-│  │  │Kafka │  │Ingestor-1,2,3│     │    │
-│  │  │:29092│  │:8080         │     │    │
-│  │  └──────┘  └──────────────┘     │    │
-│  │       ↑            ↑             │    │
-│  │       │            │             │    │
-│  │  ┌────┴────┐  ┌────┴─────┐      │    │
-│  │  │Nginx:80 │  │kafka:9092│      │    │
-│  │  └─────────┘  └──────────┘      │    │
-│  └─────────────────────────────────┘    │
-│         ↑                                │
-│    Generator (native)                    │
-│    → localhost:8080/ingest               │
-└─────────────────────────────────────────┘
-```
-
-**Characteristics:**
-- All networking via `localhost` or Docker DNS
-- Ports exposed: 8080 (Nginx), 8081-8083 (direct ingestor), 9092 (Kafka), 8090 (UI)
-- Single `docker compose up -d` deploys everything
-
-### Version 2: Distributed (5 Machines)
-```
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│ Machine A    │      │ Machine B    │      │ Machine C    │
-│ (Generator)  │      │ (Ingestor-1) │      │ (Ingestor-2) │
-│              │      │              │      │              │
-│ Generator────┼──┐   │ Ingestor-1   │      │ Ingestor-2   │
-│   ↓          │  │   │   :8080      │      │   :8080      │
-│ Nginx:8080   │  │   └──────────────┘      └──────────────┘
-└──────────────┘  │          ↓                      ↓
-                  │   ┌──────────────┐      ┌──────────────┐
-                  │   │ Machine D    │      │ Machine E    │
-                  │   │ (Ingestor-3) │      │ (Kafka)      │
-                  │   │              │      │              │
-                  └──→│ Ingestor-3   │      │ Kafka:9092   │
-                      │   :8080      │      │              │
-                      └──────────────┘      └──────────────┘
-                             ↓                      ↑
-                             └──────────────────────┘
-```
-
-**Characteristics:**
-- Cross-machine TCP communication (192.168.1.x)
-- Each machine deploys ONE service
-- Nginx load balances to 3 IPs
-- Requires manual IP editing before deployment
-
-## Failure Modes & Handling
-
-| Failure | Detection | Response | Recovery |
-|---------|-----------|----------|----------|
-| **Missing .env file** | Generator: Silent fallback to defaults<br>Docker: Container fails to start | Generator uses hardcoded `http://localhost:8080`<br>Docker shows env var substitution error | `cp config/.env.single-machine config/.env` before deployment |
-| **Wrong IPs in V2** | Connection timeout (Generator→Nginx, Ingestor→Kafka) | HTTP 503 / Kafka connection errors in logs | Edit `config/.env` with correct IPs + `nginx.distributed.conf`, redeploy |
-| **Port conflict in V1** | Docker bind error: "port already in use" | Container fails to start | Change `*_PORT` variables in `config/.env` |
-| **Stale .env after switching** | Services connect to wrong endpoints | Data goes to old Kafka, events lost | Re-copy the correct template to `config/.env` before starting services |
-| **Forgot to copy .env to all machines (V2)** | Each machine reads different config | Ingestors point to wrong Kafka, inconsistent state | `scp config/.env` to all 5 machines |
-| **Nginx can't resolve DNS (V2)** | `nginx: [emerg] host not found in upstream` | Nginx container fails to start | Use IPs not hostnames in `nginx.distributed.conf` |
-
-## Operational Procedures
-
-### Switching Environments
-```bash
-# Local pipeline
-cp config/.env.single-machine config/.env
-
-# Distributed pipeline
-# 1. Use .env.distributed as reference, edit config/.env with actual IPs
-# 2. Edit ingestor/nginx.distributed.conf with actual upstream IPs
-cp config/.env.distributed config/.env   # then edit config/.env with real IPs
-```
-
-### Verifying Active Configuration
-```bash
-# Check which template is active
-head -1 config/.env  # Shows "VERSION 1" or "VERSION 2" comment
-
-# Verify Generator will use correct URL
-grep INGEST_URL config/.env
-
-# Verify Ingestors will connect to correct Kafka
-grep SPRING_KAFKA_BOOTSTRAP_SERVERS config/.env
-
-# Test config without deploying
-docker compose -f ingestor/docker-compose.yml config | grep SPRING_KAFKA
-```
-
-### Debugging Configuration Issues
-```bash
-# Generator: Check what env vars it loaded
-./generator/build/generate  # Logs show config loading
-
-# Ingestor: Check env vars inside container
-docker exec ingestor-1 env | grep KAFKA
-
-# Kafka: Verify advertised listeners
-docker logs kafka | grep ADVERTISED
-
-# Nginx: Check upstream resolution
-docker exec ingestor-lb nginx -T | grep upstream
-```
-
-## Security Considerations
-1. **Do not expose `.env.distributed`** - It is a reference example only. The actual distributed env with real IPs must not be committed or shared publicly.
-2. **No secrets in .env files** - These are version controlled
-   - If needed: Use `.env.local` (gitignored) for secrets, source after `.env`
-3. **Network exposure:**
-   - V1: Only localhost ports exposed
-   - V2: All services exposed on 0.0.0.0 - use firewall rules
-4. **File permissions:** `.env` is world-readable (needed by Docker)
-   - Sensitive configs should use Docker secrets or external secret managers
-
-## Future Improvements
-1. **Variable validation:** Pre-flight check script to verify IPs are reachable
-2. **Dynamic Nginx config:** Generate `nginx.distributed.conf` from `.env` variables
-3. **Deployment automation:** Ansible/Terraform for V2 multi-machine setup
-4. **Health checks:** Verify end-to-end connectivity before declaring deployment successful
-5. **Rollback mechanism:** Keep previous `.env` as `.env.backup`
+## 주요 실패 패턴
+| Failure | Symptom | 대응 |
+|---|---|---|
+| `--env-file` 누락 | `${VAR}` blank/default 경고 | 실행 커맨드에 `--env-file config/.env` 추가 |
+| `.env`에 non-network 키 혼재 | source-of-truth 충돌 | `.env`에서 제거 |
+| topic 불일치 | Kafka -> Flink 데이터 미유입 | compose의 `APP_KAFKA_TOPIC`, `FLINK_KAFKA_TOPIC` 통일 |
+| ClickHouse table 불일치 | Flink JDBC insert 실패 | `FLINK_CLICKHOUSE_DATABASE/TABLE`과 schema 정합성 확인 |

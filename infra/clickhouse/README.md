@@ -1,37 +1,38 @@
-# ClickHouse (Docker Compose)
+# ClickHouse Runtime Guide
 
-로컬/개발 환경에서 ClickHouse 서버를 Docker Compose로 실행하기 위한 가이드입니다.
+## 파일 위치
+- Single-machine compose: `infra/clickhouse/docker-compose.yml`
+- Distributed compose: `infra/clickhouse/docker-compose.distributed.yml`
+- Schema: `infra/clickhouse/schema.sql`
 
-## Prerequisites
-- **Docker + Docker Compose**
+ClickHouse runtime 값은 compose에 하드코딩되어 있고, schema는 mount로 초기화된다.
 
-## Compose 파일
-- `infra/clickhouse/docker-compose.yml`
-
-## Quick start (commands used)
+## 실행 전 준비
 ```bash
-cd infra/clickhouse
-docker compose up -d
+cp config/.env.single-machine config/.env
+# distributed는 .env.distributed를 복사 후 실제 IP/PORT 반영
 ```
 
-### Health check
+## 실행
+```bash
+# single-machine
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
+
+# distributed
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse
+```
+
+## 헬스체크
 ```bash
 curl -s http://localhost:8123/ping
+# expected: Ok
 ```
-Expected: `Ok`
 
-## Ports
-- **8123**: HTTP interface
-- **9000**: Native TCP interface
+## 포트
+- HTTP: `8123`
+- Native TCP: `9000`
 
-## Data persistence
-- Docker volume `clickhouse_data` → `/var/lib/clickhouse`
-
-## Optional schema init
-- `infra/clickhouse/schema.sql` is mounted to `/docker-entrypoint-initdb.d/schema.sql`
-- To re-apply, update the file and restart the container.
-
-## Stop
+## 중지
 ```bash
-docker compose down
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env stop clickhouse
 ```

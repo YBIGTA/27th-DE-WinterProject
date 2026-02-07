@@ -19,8 +19,8 @@ wheels/
 /data/taxi_data_preprocessed
 
 # generator
-/generator/build
-/generator/CMakeUserPresets.json
+/services/generator/build
+/services/generator/CMakeUserPresets.json
 
 # C++ build artifacts
 CMakeFiles/
@@ -36,16 +36,22 @@ cmake-build-*/
 .gradle/
 
 # ingestor
-/ingestor/test_ingestion.class
-/ingestor/test_ingestion$Stats.class
-/ingestor/.gradle/
-/ingestor/build/
-/ingestor/out/
-/ingestor/.idea/
-/ingestor/*.iml
-/ingestor/.classpath
-/ingestor/.project
-/ingestor/.settings/
+/services/ingestor/test_ingestion.class
+/services/ingestor/test_ingestion$Stats.class
+/services/ingestor/.gradle/
+/services/ingestor/build/
+/services/ingestor/out/
+/services/ingestor/.idea/
+/services/ingestor/*.iml
+/services/ingestor/.classpath
+/services/ingestor/.project
+/services/ingestor/.settings/
+
+# flink-job
+/services/flink-job/target/
+
+# connector
+infra/connectors/s3-sink-config.json
 
 # logs
 *.log
@@ -65,3 +71,6 @@ Thumbs.db
 # Keep template files
 !config/.env.single-machine
 !config/.env.distributed
+
+# claude
+.claude
