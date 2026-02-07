@@ -8,5 +8,5 @@ services:
       - "${NGINX_LB_PORT:-8080}:80"
     volumes:
       - ./templates/nginx.distributed.conf.template:/etc/nginx/templates/nginx.conf.template:ro
-    command: sh -c 'envsubst < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g "daemon off;"'
+    command: sh -c "envsubst '$$INGESTOR_1_IP $$INGESTOR_2_IP $$INGESTOR_3_IP $$INGESTOR_1_PORT $$INGESTOR_2_PORT $$INGESTOR_3_PORT' < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
     restart: unless-stopped
