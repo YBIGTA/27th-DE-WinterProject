@@ -82,6 +82,36 @@ docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.
 cd services/generator && ./build/generate
 ```
 
+## 3) K8s (single-machine via k3d)
+
+```bash
+# 0. K8s 클러스터 생성
+bash k8s/registry/registry-setup.sh
+
+# 1. 이미지 빌드 및 푸시 (상세: k8s/README.md)
+docker build -t localhost:5000/taxi-ingestor:latest -f services/ingestor/Dockerfile services/ingestor/
+docker push localhost:5000/taxi-ingestor:latest
+cd services/flink-job && mvn clean package -DskipTests
+docker build -t localhost:5000/taxi-flink-job:latest -f Dockerfile .
+docker push localhost:5000/taxi-flink-job:latest
+cd ../..
+
+# 2. K8s 매니페스트 배포
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/kafka/
+kubectl wait --for=condition=ready pod -l app=kafka -n taxi-pipeline --timeout=180s
+kubectl apply -f k8s/ingestor/
+kubectl apply -f k8s/flink/
+
+# 3. External Nginx (K8s NodePort로 연결)
+cp config/.env.single-machine config/.env
+# config/.env 에서 INGESTOR_1_PORT=30080 으로 수정
+docker compose -f infra/nginx/docker-compose.k8s.yml --env-file config/.env up
+
+# 4. Generator (native)
+cd services/generator && ./build/generate
+```
+
 ## 빠른 검증
 ```bash
 # .env network-only 확인

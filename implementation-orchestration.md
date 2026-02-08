@@ -41,7 +41,7 @@ Downstream execution plan from `orchestration.md`.
 | P1-12 | Flink JobManager deployment | `k8s/flink/flink-jobmanager-deployment.yaml` | DONE | standalone-job args |
 | P1-13 | Flink JobManager service | `k8s/flink/flink-jobmanager-service.yaml` | DONE | ClusterIP + NodePort `30081` |
 | P1-14 | Flink TaskManager deployment | `k8s/flink/flink-taskmanager-deployment.yaml` | DONE | start with 1 replica |
-| P1-15 | External Nginx routing update | `infra/nginx/templates/nginx.distributed.conf.template` | DONE | single upstream `<node-ip>:30080` |
+| P1-15 | External Nginx routing update | `infra/nginx/docker-compose.k8s.yml` + `nginx.k8s.conf.template` | DONE | single upstream via NodePort 30080 |
 | P1-16 | Verification runbook | section update in this file | DONE | deploy order + checks |
 
 ## 5) Immediate Next Actions
@@ -146,13 +146,17 @@ echo "Open: http://localhost:30081"
 
 ### 8.6 External Nginx (k8s ingress path)
 
-Before running external Nginx in distributed mode, set the upstream endpoint to k8s NodePort:
+Before running external Nginx, set the upstream endpoint to the k8s NodePort in `config/.env`:
 
 - `INGESTOR_1_IP=<k3d-node-ip-or-127.0.0.1>`
 - `INGESTOR_1_PORT=30080`
 
-Then run Nginx as usual:
+Then run Nginx using the **k8s-specific** compose file (not the distributed one):
 
 ```bash
-docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/nginx/docker-compose.k8s.yml --env-file config/.env up -d
 ```
+
+Note: `docker-compose.k8s.yml` uses `nginx.k8s.conf.template` which has a single upstream.
+K8s handles internal load balancing via kube-proxy; Nginx only needs the NodePort endpoint.
+Do NOT use `docker-compose.distributed.yml` here — that file has 3 upstreams for non-k8s distributed mode.

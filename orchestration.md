@@ -203,16 +203,17 @@ Most complex piece — KRaft needs stable pod identities.
 - Same image and flink-conf.yaml mount as JobManager
 - Resources: 512Mi-1.5Gi memory (higher — runs actual processing)
 
-### Step 7 — Update External Nginx Config
+### Step 7 — External Nginx Config for K8s
 
-Modify `infra/nginx/templates/nginx.distributed.conf.template`:
+Use the dedicated K8s nginx config `infra/nginx/docker-compose.k8s.yml` + `infra/nginx/templates/nginx.k8s.conf.template`:
 ```nginx
 upstream ingestors {
     least_conn;
-    server <node-ip>:30080;
+    server ${INGESTOR_1_IP}:${INGESTOR_1_PORT};
 }
 ```
 K8s handles pod-level load balancing internally via kube-proxy. Nginx only needs one NodePort entry.
+Do NOT modify `nginx.distributed.conf.template` — that file serves Mode 2 (distributed w/o K8s).
 
 ### Step 8 — Deploy & Verify
 
@@ -238,7 +239,8 @@ kubectl apply -f k8s/flink/
 
 | File | Change |
 |------|--------|
-| `infra/nginx/templates/nginx.distributed.conf.template` | Update upstream to NodePort on node IP |
+| `infra/nginx/templates/nginx.k8s.conf.template` (new) | Single upstream to NodePort on node IP |
+| `infra/nginx/docker-compose.k8s.yml` (new) | K8s-specific compose for external Nginx |
 | `services/generator/config/default.yaml` | Verify `ingestion_url` points to Nginx |
 
 ### Files to Create
