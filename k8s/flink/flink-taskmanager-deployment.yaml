@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+  namespace: taxi-pipeline
+  labels:
+    app: flink
+    component: taskmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flink
+      component: taskmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: taskmanager
+    spec:
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:1.36
+          command:
+            - sh
+            - -ec
+            - |
+              until nc -z kafka-0.kafka-headless.taxi-pipeline.svc.cluster.local 29092; do
+                echo "Waiting for Kafka broker..."
+                sleep 3
+              done
+      containers:
+        - name: flink-taskmanager
+          image: k3d-taxi-registry:5000/taxi-flink-job:latest
+          imagePullPolicy: Always
+          args:
+            - taskmanager
+          envFrom:
+            - configMapRef:
+                name: flink-config
+          volumeMounts:
+            - name: flink-config-volume
+              mountPath: /opt/flink/conf/flink-conf.yaml
+              subPath: flink-conf.yaml
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1536Mi"
+      volumes:
+        - name: flink-config-volume
+          configMap:
+            name: flink-config
+            items:
+              - key: flink-conf.yaml
+                path: flink-conf.yaml

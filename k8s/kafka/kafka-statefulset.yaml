@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: taxi-pipeline
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: init-broker-env
+          image: busybox:1.36
+          command:
+            - sh
+            - -ec
+            - |
+              ordinal="${HOSTNAME##*-}"
+              node_id="$((ordinal + 1))"
+              advertised_listener="INTERNAL://${HOSTNAME}.kafka-headless.taxi-pipeline.svc.cluster.local:29092"
+
+              cat > /workdir/broker-env.sh <<EOF
+              export KAFKA_NODE_ID=${node_id}
+              export KAFKA_ADVERTISED_LISTENERS=${advertised_listener}
+              EOF
+          volumeMounts:
+            - name: broker-env
+              mountPath: /workdir
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.5.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - |
+              . /workdir/broker-env.sh
+              export KAFKA_NODE_ID
+              export KAFKA_ADVERTISED_LISTENERS
+              exec /etc/confluent/docker/run
+          envFrom:
+            - configMapRef:
+                name: kafka-config
+          ports:
+            - name: internal
+              containerPort: 29092
+            - name: controller
+              containerPort: 19093
+          volumeMounts:
+            - name: broker-env
+              mountPath: /workdir
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+          readinessProbe:
+            tcpSocket:
+              port: internal
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -ec
+                - kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+      volumes:
+        - name: broker-env
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

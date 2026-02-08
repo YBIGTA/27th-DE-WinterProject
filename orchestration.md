@@ -62,16 +62,22 @@ k8s/
 
 ### Step 1 — k3d Cluster + Local Registry Setup
 
-k3d has built-in registry support — no manual `registry:2` container or `registries.yaml` needed:
+k3d has built-in registry support — no manual `registry:2` container or `registries.yaml` needed.
+Pin tool/runtime versions for reproducibility:
+- `kubectl`: `v1.35.0`
+- `k3d`: `v5.8.3`
+- k3d cluster image: `rancher/k3s:v1.34.3-k3s1`
+- optional host k3s binary: `v1.34.3+k3s1`
 
 ```bash
-# Install k3d
-curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+# Install k3d (pinned)
+curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.8.3 bash
 
 # Create a local registry and k3d cluster in one go
 k3d registry create taxi-registry --port 5000
 k3d cluster create taxi-pipeline \
   --servers 1 --agents 2 \
+  --image rancher/k3s:v1.34.3-k3s1 \
   --registry-use k3d-taxi-registry:5000 \
   -p "30080:30080@server:0" \
   -p "30081:30081@server:0" \
@@ -83,20 +89,20 @@ k3d cluster create taxi-pipeline \
   - 30080: Ingestor NodePort (external Nginx → k8s)
   - 30081: Flink dashboard NodePort
   - 30090: Kafka UI NodePort
-- Images tagged as `k3d-taxi-registry:5000/taxi-ingestor:latest` are automatically accessible
+- Images pushed to `localhost:5000/<image>:<tag>` are available to the k3d cluster registry
 - Cluster lifecycle: `k3d cluster delete taxi-pipeline` for clean teardown
 
 ### Step 2 — Build & Push Docker Images
 
 ```bash
 # Ingestor (multi-stage build handles gradle internally)
-docker build -t k3d-taxi-registry:5000/taxi-ingestor:latest -f services/ingestor/Dockerfile services/ingestor/
-docker push k3d-taxi-registry:5000/taxi-ingestor:latest
+docker build -t localhost:5000/taxi-ingestor:latest -f services/ingestor/Dockerfile services/ingestor/
+docker push localhost:5000/taxi-ingestor:latest
 
 # Flink job (build JAR first)
 cd services/flink-job && mvn clean package -DskipTests
-docker build -t k3d-taxi-registry:5000/taxi-flink-job:latest -f Dockerfile .
-docker push k3d-taxi-registry:5000/taxi-flink-job:latest
+docker build -t localhost:5000/taxi-flink-job:latest -f Dockerfile .
+docker push localhost:5000/taxi-flink-job:latest
 ```
 
 ### Step 3 — Namespace

@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flink-config
+  namespace: taxi-pipeline
+data:
+  FLINK_KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka-headless.taxi-pipeline.svc.cluster.local:29092,kafka-1.kafka-headless.taxi-pipeline.svc.cluster.local:29092,kafka-2.kafka-headless.taxi-pipeline.svc.cluster.local:29092"
+  FLINK_CLICKHOUSE_HOST: "replace-with-aws-clickhouse-host"
+  FLINK_CLICKHOUSE_PORT: "8123"
+  FLINK_PARALLELISM: "1"
+  FLINK_TASKMANAGER_SLOTS: "2"
+  FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC: "5"
+  FLINK_WINDOW_DEMAND_MINUTES: "3"
+  FLINK_JDBC_BATCH_SIZE: "5000"
+  FLINK_JDBC_BATCH_INTERVAL_MS: "5000"
+  FLINK_KAFKA_TOPIC: "taxi-event-data"
+  FLINK_KAFKA_GROUP_ID: "taxi-realtime-flink"
+  FLINK_ENABLE_CLICKHOUSE_SINK: "false"
+  FLINK_CLICKHOUSE_DATABASE: "default"
+  FLINK_CLICKHOUSE_TABLE: "taxi_events"
+  flink-conf.yaml: |
+    jobmanager.rpc.address: flink-jobmanager
+    parallelism.default: 1
+    taskmanager.numberOfTaskSlots: 2

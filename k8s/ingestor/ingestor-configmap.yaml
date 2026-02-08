@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingestor-config
+  namespace: taxi-pipeline
+data:
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka-headless.taxi-pipeline.svc.cluster.local:29092,kafka-1.kafka-headless.taxi-pipeline.svc.cluster.local:29092,kafka-2.kafka-headless.taxi-pipeline.svc.cluster.local:29092"
+  SERVER_PORT: "8080"
+  APP_KAFKA_TOPIC: "taxi-event-data"
+  APP_TUNING_BUFFER_SIZE: "10000"
+  APP_TUNING_BATCH_SIZE: "500"
+  APP_TUNING_BATCH_TIMEOUT_MS: "50"
+  APP_TUNING_KAFKA_SEND_CONCURRENCY: "4"
+  APP_TUNING_METRICS_INTERVAL_SEC: "10"
