@@ -7,3 +7,14 @@ CREATE TABLE IF NOT EXISTS default.taxi_events
 )
 ENGINE = MergeTree
 ORDER BY (trip_id, ts);
+
+CREATE TABLE IF NOT EXISTS default.taxi_zones
+(
+    `zone_id` UInt32,
+    `zone_name` String,
+    `borough` String,
+    `lat` Float64,
+    `lon` Float64
+)
+ENGINE = MergeTree
+ORDER BY zone_id;
