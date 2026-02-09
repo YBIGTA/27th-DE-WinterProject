@@ -1,38 +1,39 @@
 services:
+  # 1. Flink JobManager
   flink-jobmanager:
     build: ../../services/flink-job
     image: flink-taxi-job:latest
     container_name: flink-jobmanager
     command: standalone-job --job-classname com.example.TaxiRealtimeJob
     ports:
-      - "${FLINK_JOBMANAGER_PORT:-8081}:8081"
+      - "${FLINK_JOBMANAGER_PORT:-8084}:8081"
     env_file:
       - ../../config/.env
     environment:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
-        parallelism.default: 1
-      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
-      - FLINK_CLICKHOUSE_HOST=clickhouse
+        parallelism.default: 6
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
-      - FLINK_PARALLELISM=1
+      - FLINK_PARALLELISM=6
       - FLINK_TASKMANAGER_SLOTS=2
       - FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC=5
       - FLINK_WINDOW_DEMAND_MINUTES=3
-      - FLINK_JDBC_BATCH_SIZE=5000
-      - FLINK_JDBC_BATCH_INTERVAL_MS=5000
+      - FLINK_JDBC_BATCH_SIZE=1000
+      - FLINK_JDBC_BATCH_INTERVAL_MS=1000
       - FLINK_KAFKA_TOPIC=taxi-event-data
       - FLINK_KAFKA_GROUP_ID=${FLINK_KAFKA_GROUP_ID:-taxi-realtime-flink}
-      - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
     networks:
       - kafka-network
 
-  flink:
+  # 2. Flink TaskManager 1
+  flink-taskmanager-1:
     image: flink-taxi-job:latest
-    container_name: flink-taskmanager
+    container_name: flink-taskmanager-1
     command: taskmanager
     depends_on:
       - flink-jobmanager
@@ -43,20 +44,49 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 2
-      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
-      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
-      - FLINK_PARALLELISM=1
-      - FLINK_TASKMANAGER_SLOTS=2
-      - FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC=5
-      - FLINK_WINDOW_DEMAND_MINUTES=3
-      - FLINK_JDBC_BATCH_SIZE=5000
-      - FLINK_JDBC_BATCH_INTERVAL_MS=5000
-      - FLINK_KAFKA_TOPIC=taxi-event-data
-      - FLINK_KAFKA_GROUP_ID=${FLINK_KAFKA_GROUP_ID:-taxi-realtime-flink}
-      - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
-      - FLINK_CLICKHOUSE_DATABASE=default
-      - FLINK_CLICKHOUSE_TABLE=taxi_events
+    networks:
+      - kafka-network
+
+  # 3. Flink TaskManager 2
+  flink-taskmanager-2:
+    image: flink-taxi-job:latest
+    container_name: flink-taskmanager-2
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    env_file:
+      - ../../config/.env
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
+      - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
+    networks:
+      - kafka-network
+
+  # 4. Flink TaskManager 3
+  flink-taskmanager-3:
+    image: flink-taxi-job:latest
+    container_name: flink-taskmanager-3
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    env_file:
+      - ../../config/.env
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
+      - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
+      - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
     networks:
       - kafka-network
 

@@ -25,10 +25,28 @@ cd services/flink-job && mvn clean package && cd ../..
 docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
 
 # distributed
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager flink
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager
+
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-1
+
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-2
+
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-3
 ```
 
 ## 확인
 ```bash
+# single-machine
 docker logs -f flink-taskmanager
+
+# distributed
+docker logs -f flink-taskmanager-1
+
+docker logs -f flink-taskmanager-2
+
+docker logs -f flink-taskmanager-3
 ```
+
+또는
+
+http://localhost:8084
