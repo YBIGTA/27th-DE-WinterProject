@@ -50,20 +50,21 @@ Phase 1 exit was declared on 2026-02-09. ClickHouse data verification is intenti
 
 | ID | Task | Deliverable | Status | Notes |
 |---|---|---|---|---|
-| P15-01 | Create multi-node scaffold | `k8s/multi-node/` directory | TODO | Dockerized k3s + Tailscale runtime assets |
-| P15-02 | Build base image | `k8s/multi-node/Dockerfile` | TODO | `rancher/k3s` base + tailscale install |
-| P15-03 | Runtime entrypoint | `k8s/multi-node/entrypoint.sh` | TODO | starts tailscaled, authenticates, launches k3s role |
-| P15-04 | Team runbook | `k8s/multi-node/README.md` | TODO | server/agent startup steps for Linux/Mac/Windows |
+| P15-01 | Create multi-node scaffold | `k8s/multi-node/` directory | DONE | runtime assets scaffolded |
+| P15-02 | Build base image | `k8s/multi-node/Dockerfile` | DONE | `rancher/k3s:v1.34.3-k3s1` + Tailscale binaries |
+| P15-03 | Runtime entrypoint | `k8s/multi-node/entrypoint.sh` | DONE | role-based startup: tailscaled auth + k3s server/agent launch |
+| P15-04 | Team runbook | `k8s/multi-node/README.md` | DONE | server/agent startup + kubeconfig + validation guide |
 | P15-05 | Server path validation | run log + command set | TODO | server container joins Tailscale and exposes k3s API |
 | P15-06 | Agent join validation | run log + command set | TODO | worker containers join same cluster successfully |
-| P15-07 | Registry strategy update | Phase 1.5 notes in runbook | TODO | replace k3d registry assumption with Tailscale-reachable registry |
+| P15-07 | Registry strategy update | Phase 1.5 notes in runbook | DONE | runbook includes Tailscale-reachable registry approach |
 | P15-08 | Manifest reuse check | validation notes | TODO | verify existing Phase 1 manifests deploy unchanged on Phase 1.5 cluster |
 
 ## 5) Immediate Next Actions
 
-1. Implement `P15-01` to `P15-04` under `k8s/multi-node/`.
-2. Execute `P15-05` and `P15-06` with one server and at least one agent container.
-3. Document registry/network requirements for Phase 1.5 (`P15-07`).
+1. Execute `P15-05` and `P15-06` with one server and at least one agent container.
+2. Validate registry pull/push path on Tailscale network and record results.
+3. Run `P15-08` by applying existing Phase 1 manifests on the Phase 1.5 cluster.
+4. Track all manual checks in `k8s/vertification.md`.
 
 ## 6) Decisions Log
 
@@ -73,6 +74,7 @@ Phase 1 exit was declared on 2026-02-09. ClickHouse data verification is intenti
 - 2026-02-08: Pin local k8s test versions (`kubectl v1.35.0`, `k3d v5.8.3`, cluster image `rancher/k3s:v1.34.3-k3s1`).
 - 2026-02-08: Default Flink ClickHouse sink to `false` for initial end-to-end smoke tests.
 - 2026-02-09: Declare Phase 1 complete without ClickHouse exit-gate validation; move active implementation scope to Phase 1.5.
+- 2026-02-09: For Phase 1.5 runtime, use `rancher/k3s:v1.34.3-k3s1` with copied `tailscaled/tailscale` binaries and env-driven role split (`server|agent`).
 
 ## 7) Change Log
 
@@ -85,6 +87,8 @@ Phase 1 exit was declared on 2026-02-09. ClickHouse data verification is intenti
 - 2026-02-08: Updated runbooks for post-install execution flow and ClickHouse-deferred smoke testing.
 - 2026-02-08: Set default `FLINK_ENABLE_CLICKHOUSE_SINK=false` for first-pass k3d testing.
 - 2026-02-09: Closed Phase 1 execution board and opened Phase 1.5 execution board (`P15-01` to `P15-08`).
+- 2026-02-09: Completed `P15-01`, `P15-02`, `P15-03`, `P15-04`, and `P15-07` (created `k8s/multi-node` assets and runbook).
+- 2026-02-09: Added manual validation runbook `k8s/vertification.md` for operator-driven checks (`P15-05`, `P15-06`, `P15-08`).
 
 ## 8) Verification Runbook
 
