@@ -35,6 +35,8 @@ services:
     image: flink-taxi-job:latest
     container_name: flink-taskmanager-1
     command: taskmanager
+    ports:
+      - "${FLINK_TASKMANAGER_1_RPC_PORT:-6122}:6122"
     env_file:
       - ../../config/.env
     environment:
@@ -53,6 +55,8 @@ services:
     image: flink-taxi-job:latest
     container_name: flink-taskmanager-2
     command: taskmanager
+    ports:
+      - "${FLINK_TASKMANAGER_2_RPC_PORT:-6123}:6122"
     env_file:
       - ../../config/.env
     environment:
@@ -71,6 +75,8 @@ services:
     image: flink-taxi-job:latest
     container_name: flink-taskmanager-3
     command: taskmanager
+    ports:
+      - "${FLINK_TASKMANAGER_3_RPC_PORT:-6124}:6122"
     env_file:
       - ../../config/.env
     environment:
