@@ -13,8 +13,8 @@ Downstream execution plan from `orchestration.md`.
 
 ## 2) Current Scope
 
-- Active phase: `Phase 1 (Single-machine via k3d/k3s)`
-- Goal: migrate current distributed Docker Compose runtime to Kubernetes manifests under `k8s/`
+- Active phase: `Phase 1.5 (Multi-machine via k3s + Tailscale in Docker)`
+- Goal: build and validate cross-machine k3s cluster runtime while reusing existing `k8s/` manifests from Phase 1
 
 ## 3) Status Legend
 
@@ -23,7 +23,7 @@ Downstream execution plan from `orchestration.md`.
 - `DONE`: implemented and checked
 - `BLOCKED`: cannot continue without prerequisite/decision
 
-## 4) Phase 1 Execution Board
+## 4) Phase 1 Execution Board (Closed)
 
 | ID | Task | Deliverable | Status | Notes |
 |---|---|---|---|---|
@@ -44,11 +44,26 @@ Downstream execution plan from `orchestration.md`.
 | P1-15 | External Nginx routing update | `infra/nginx/docker-compose.k8s.yml` + `nginx.k8s.conf.template` | DONE | single upstream via NodePort 30080 |
 | P1-16 | Verification runbook | section update in this file | DONE | deploy order + checks |
 
+Phase 1 exit was declared on 2026-02-09. ClickHouse data verification is intentionally excluded from the Phase 1 exit gate.
+
+## 4.5) Phase 1.5 Execution Board
+
+| ID | Task | Deliverable | Status | Notes |
+|---|---|---|---|---|
+| P15-01 | Create multi-node scaffold | `k8s/multi-node/` directory | TODO | Dockerized k3s + Tailscale runtime assets |
+| P15-02 | Build base image | `k8s/multi-node/Dockerfile` | TODO | `rancher/k3s` base + tailscale install |
+| P15-03 | Runtime entrypoint | `k8s/multi-node/entrypoint.sh` | TODO | starts tailscaled, authenticates, launches k3s role |
+| P15-04 | Team runbook | `k8s/multi-node/README.md` | TODO | server/agent startup steps for Linux/Mac/Windows |
+| P15-05 | Server path validation | run log + command set | TODO | server container joins Tailscale and exposes k3s API |
+| P15-06 | Agent join validation | run log + command set | TODO | worker containers join same cluster successfully |
+| P15-07 | Registry strategy update | Phase 1.5 notes in runbook | TODO | replace k3d registry assumption with Tailscale-reachable registry |
+| P15-08 | Manifest reuse check | validation notes | TODO | verify existing Phase 1 manifests deploy unchanged on Phase 1.5 cluster |
+
 ## 5) Immediate Next Actions
 
-1. Execute the runbook in section `8) Verification Runbook`.
-2. Keep Flink ClickHouse sink disabled for initial smoke tests.
-3. Enable ClickHouse sink after AWS endpoint is ready.
+1. Implement `P15-01` to `P15-04` under `k8s/multi-node/`.
+2. Execute `P15-05` and `P15-06` with one server and at least one agent container.
+3. Document registry/network requirements for Phase 1.5 (`P15-07`).
 
 ## 6) Decisions Log
 
@@ -57,6 +72,7 @@ Downstream execution plan from `orchestration.md`.
 - 2026-02-08: Use `FLINK_CLICKHOUSE_HOST=replace-with-aws-clickhouse-host` as safe placeholder; set real endpoint before enabling ClickHouse sink.
 - 2026-02-08: Pin local k8s test versions (`kubectl v1.35.0`, `k3d v5.8.3`, cluster image `rancher/k3s:v1.34.3-k3s1`).
 - 2026-02-08: Default Flink ClickHouse sink to `false` for initial end-to-end smoke tests.
+- 2026-02-09: Declare Phase 1 complete without ClickHouse exit-gate validation; move active implementation scope to Phase 1.5.
 
 ## 7) Change Log
 
@@ -68,6 +84,7 @@ Downstream execution plan from `orchestration.md`.
 - 2026-02-08: Completed `P1-15` (Nginx distributed upstream switched to single NodePort endpoint).
 - 2026-02-08: Updated runbooks for post-install execution flow and ClickHouse-deferred smoke testing.
 - 2026-02-08: Set default `FLINK_ENABLE_CLICKHOUSE_SINK=false` for first-pass k3d testing.
+- 2026-02-09: Closed Phase 1 execution board and opened Phase 1.5 execution board (`P15-01` to `P15-08`).
 
 ## 8) Verification Runbook
 

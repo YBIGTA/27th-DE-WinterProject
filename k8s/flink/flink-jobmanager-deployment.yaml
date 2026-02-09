@@ -29,6 +29,16 @@ spec:
                 echo "Waiting for Kafka broker..."
                 sleep 3
               done
+        - name: create-kafka-topic
+          image: confluentinc/cp-kafka:7.5.0
+          command:
+            - sh
+            - -c
+            - |
+              kafka-topics --create --if-not-exists \
+                --topic taxi-event-data \
+                --bootstrap-server kafka-0.kafka-headless.taxi-pipeline.svc.cluster.local:29092
+              echo "Topic taxi-event-data ensured."
       containers:
         - name: flink-jobmanager
           image: k3d-taxi-registry:5000/taxi-flink-job:latest
@@ -47,10 +57,6 @@ spec:
               containerPort: 6123
             - name: blob
               containerPort: 6124
-          volumeMounts:
-            - name: flink-config-volume
-              mountPath: /opt/flink/conf/flink-conf.yaml
-              subPath: flink-conf.yaml
           readinessProbe:
             httpGet:
               path: /
@@ -74,10 +80,3 @@ spec:
             limits:
               cpu: "1000m"
               memory: "1Gi"
-      volumes:
-        - name: flink-config-volume
-          configMap:
-            name: flink-config
-            items:
-              - key: flink-conf.yaml
-                path: flink-conf.yaml

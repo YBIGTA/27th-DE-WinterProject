@@ -227,13 +227,18 @@ kubectl apply -f k8s/flink/
 
 ### Verification Checklist
 
-- [ ] `kubectl get pods -n taxi-pipeline` — all pods Running (3 kafka, 1 kafka-ui, 3 ingestor, 2 flink)
-- [ ] `kubectl logs kafka-0 -n taxi-pipeline` — broker healthy, quorum formed
-- [ ] Exec into kafka pod, verify topic: `kafka-topics --list --bootstrap-server localhost:29092`
-- [ ] Start generator → check ingestor logs: `kubectl logs -l app=ingestor -n taxi-pipeline`
-- [ ] Port-forward Flink UI: `kubectl port-forward svc/flink-jobmanager 8081:8081 -n taxi-pipeline`
-- [ ] Kafka UI: open `http://localhost:30090` — verify topics and consumer groups visible
-- [ ] Query ClickHouse: `SELECT count(*) FROM taxi_events` — data flowing end-to-end
+- [x] `kubectl get pods -n taxi-pipeline` — all pods Running (3 kafka, 1 kafka-ui, 3 ingestor, 2 flink)
+- [x] `kubectl logs kafka-0 -n taxi-pipeline` — broker healthy, quorum formed
+- [x] Exec into kafka pod, verify topic: `kafka-topics --list --bootstrap-server localhost:29092`
+- [x] Start generator → check ingestor logs: `kubectl logs -l app=ingestor -n taxi-pipeline`
+- [x] Port-forward Flink UI: `kubectl port-forward svc/flink-jobmanager 8081:8081 -n taxi-pipeline`
+- [x] Kafka UI: open `http://localhost:30090` — verify topics and consumer groups visible
+- [x] Query ClickHouse: `SELECT count(*) FROM taxi_events` — **Phase 1 exit scope waived** (deferred; not required for Phase 1 completion)
+
+### Phase 1 Exit Decision (2026-02-09)
+
+- Phase 1 is declared complete for Kubernetes migration and single-machine k3d runtime validation.
+- ClickHouse end-to-end verification is explicitly deferred and not part of the Phase 1 exit gate.
 
 ### Files to Modify
 

@@ -18,7 +18,9 @@ data:
   FLINK_ENABLE_CLICKHOUSE_SINK: "false"
   FLINK_CLICKHOUSE_DATABASE: "default"
   FLINK_CLICKHOUSE_TABLE: "taxi_events"
-  flink-conf.yaml: |
+  FLINK_PROPERTIES: |
     jobmanager.rpc.address: flink-jobmanager
     parallelism.default: 1
     taskmanager.numberOfTaskSlots: 2
+    jobmanager.memory.process.size: 1024m
+    taskmanager.memory.process.size: 1536m

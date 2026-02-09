@@ -38,10 +38,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: flink-config
-          volumeMounts:
-            - name: flink-config-volume
-              mountPath: /opt/flink/conf/flink-conf.yaml
-              subPath: flink-conf.yaml
           resources:
             requests:
               cpu: "250m"
@@ -49,10 +45,3 @@ spec:
             limits:
               cpu: "1000m"
               memory: "1536Mi"
-      volumes:
-        - name: flink-config-volume
-          configMap:
-            name: flink-config
-            items:
-              - key: flink-conf.yaml
-                path: flink-conf.yaml
