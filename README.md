@@ -1,6 +1,10 @@
 # 27th-DE-WinterProject
 Reliable, scalable, fault-tolerant data pipeline simulation project.
 
+This branch supports two deployment implementations, both without Kubernetes:
+1. Single-machine
+2. Distributed multi-machine
+
 ## Directory
 ```text
 .
@@ -24,38 +28,52 @@ Reliable, scalable, fault-tolerant data pipeline simulation project.
     └── ingestor
 ```
 
-## 문서 우선순위
-1. 실행/운영: `config/README.md`
-2. 설정 구조: `config/EXPLANATION.md`
-3. 컴포넌트별 매핑: `config/COMPONENT-CONFIGS.md`
-4. 리팩토링 이력: `demolish-ops.md`, `merge-issue.md`
+## Pipeline
+Core path:
+`generator -> nginx -> ingestor -> kafka -> flink -> clickhouse`
 
-## 실행 원칙
+Optional branches:
+1. `kafka -> kafka connect s3 sink -> S3`
+2. `prometheus + kafka-exporter + grafana`
+
+## Documentation priority
+1. Full runbook (single-machine + distributed): `config/README.md`
+2. Validation checklist: `config/VALIDATION.md`
+3. Config model and invariants: `config/EXPLANATION.md`
+4. Component runtime ownership matrix: `config/COMPONENT-CONFIGS.md`
+5. Refactor history: `demolish-ops.md`, `merge-issue.md`
+
+## Operating principles
 1. `config/.env`는 IP/PORT만 관리한다.
 2. non-network 값(topic, tuning, table 등)은 컴포넌트 compose 파일에 하드코딩한다.
 3. 각 컴포넌트 compose 파일을 직접 실행한다 (root launcher 없음).
+4. `docker compose` 실행 시 항상 `--env-file config/.env`를 명시한다.
 
-## Quick Start (single-machine)
+## Quick start
+Single-machine:
 ```bash
 cp config/.env.single-machine config/.env
 
+# Run each command in a separate terminal (foreground mode)
 docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
 docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
-docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up --build
 docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up
-docker compose -f infra/flink/docker-compose.yml --env-file config/.env up
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
+
+cd services/generator
+./build/generate
 ```
 
+Distributed commands and machine-by-machine startup order are in `config/README.md`.
+
 ## Environment
-- flink-job: JDK 11 (Flink 1.17.2 requirement)
-- ingestor: JDK 17 (Spring Boot 3.2 requirement)
-- generator: C++ (Conan + CMake)
-- Python: `uv`
-- Local dev: JDK 17+ recommended
+1. flink-job: build with JDK 17+, target bytecode Java 11 (Flink 1.17.2 compatibility)
+2. ingestor: JDK 17+ (Spring Boot 3.2)
+3. generator: C++ toolchain (Conan + CMake)
+4. Python workspace: `data/` with `uv` (`data/pyproject.toml`, `data/uv.lock`)
 
-Python `uv` workspace files are in `data/` (`data/pyproject.toml`, `data/uv.lock`).
-
-## Build Notes
+## Build notes
 
 ### flink-job (services/flink-job)
 ```bash
@@ -72,7 +90,7 @@ mvn clean package
 | flink-connector-kafka | 1.17.2 | Must match Flink version |
 | Lombok | 1.18.30+ | Required if building with JDK 21+ |
 
-**Common Issues:**
+Common issues:
 - `NoSuchFieldError: JCTree$JCImport` → Lombok version too old for your JDK. Upgrade Lombok.
 - `ClassNotFoundException` at runtime → Connector version mismatch with Flink runtime.
 

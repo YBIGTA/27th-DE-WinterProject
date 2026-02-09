@@ -88,7 +88,8 @@ public class TaxiRealtimeJob {
         // 2) 워터마크 전략 (event.ts 기반)
         WatermarkStrategy<TaxiEvent> watermarkStrategy = WatermarkStrategy
                 .<TaxiEvent>forBoundedOutOfOrderness(Duration.ofSeconds(jobConfig.watermarkOutOfOrdernessSec))
-                .withTimestampAssigner((event, timestamp) -> parseTsOrMin(event));
+                .withTimestampAssigner((event, timestamp) -> parseTsOrMin(event))
+                .withIdleness(Duration.ofSeconds(30));
 
         KafkaSource<TaxiEvent> source = KafkaSource.<TaxiEvent>builder()
                 .setBootstrapServers(bootstrap)
