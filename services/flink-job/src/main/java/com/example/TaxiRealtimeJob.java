@@ -316,12 +316,12 @@ public class TaxiRealtimeJob {
     // ---------------------------
     private static class JobConfig {
         // ✅ 고정 기본값
-        int parallelism = 6;
+        int parallelism = 12;
         int watermarkOutOfOrdernessSec = 5;
         int idleCleanupMinutes = 20;
 
-        int jdbcBatchSize = 5000;
-        int jdbcBatchIntervalMs = 1000;
+        int jdbcBatchSize = 50000;
+        int jdbcBatchIntervalMs = 3000;
 
         String kafkaTopic = "taxi-event-data";
         String kafkaGroupId = "taxi-realtime-flink";
