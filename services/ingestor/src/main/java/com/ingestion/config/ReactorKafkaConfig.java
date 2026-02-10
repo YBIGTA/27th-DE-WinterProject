@@ -56,7 +56,7 @@ public class ReactorKafkaConfig {
         senderOptions = senderOptions.stopOnError(false);
 
         // Lazy sender - doesn't connect until first send
-        senderOptions = senderOptions.maxInFlight(1024);
+        senderOptions = senderOptions.maxInFlight(32);
 
         return KafkaSender.create(senderOptions);
     }
