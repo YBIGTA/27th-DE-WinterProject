@@ -14,6 +14,17 @@ services:
     networks:
       - kafka-network
 
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    ports:
+      - "9115:9115"
+    networks:
+      - kafka-network
+
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.7.0
     container_name: kafka-exporter

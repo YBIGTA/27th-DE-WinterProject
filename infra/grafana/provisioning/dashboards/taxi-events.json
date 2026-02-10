@@ -26,18 +26,26 @@
     },
     {
       "id": 2,
-      "title": "Events by Type",
-      "type": "piechart",
+      "title": "Avg Trip Duration",
+      "type": "stat",
       "gridPos": { "h": 8, "w": 8, "x": 4, "y": 0 },
       "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT event, count() as cnt FROM default.taxi_events GROUP BY event ORDER BY cnt DESC",
+          "rawSql": "SELECT round(avg(duration), 1) as avg_minutes FROM (SELECT trip_id, dateDiff('minute', minIf(ts, event='PICKUP'), maxIf(ts, event='DROPOFF')) as duration FROM default.taxi_events GROUP BY trip_id HAVING duration > 0 AND duration < 180)",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 30 }, { "color": "red", "value": 60 }] },
+          "unit": "min"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 3,
@@ -68,7 +76,7 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toStartOfMinute(ts) as time, event, count() as cnt FROM default.taxi_events WHERE ts >= $__fromTime AND ts <= $__toTime GROUP BY time, event ORDER BY time",
+          "rawSql": "SELECT toStartOfMinute(ts) as time, event, count() as events FROM default.taxi_events GROUP BY time, event ORDER BY time",
           "refId": "A"
         }
       ],
@@ -87,7 +95,7 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toString(zone_id) as zone, count() as cnt FROM default.taxi_events WHERE event = 'PICKUP' GROUP BY zone_id ORDER BY cnt DESC LIMIT 10",
+          "rawSql": "SELECT toString(zone_id) as zone, count() as demand FROM default.taxi_events WHERE event = 'PICKUP' GROUP BY zone_id ORDER BY demand DESC LIMIT 10",
           "refId": "A"
         }
       ]
@@ -102,7 +110,7 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toStartOfMinute(ts) as time, count() as events_per_min FROM default.taxi_events WHERE ts >= $__fromTime AND ts <= $__toTime GROUP BY time ORDER BY time",
+          "rawSql": "SELECT toStartOfMinute(ts) as time, count() as events_per_min FROM default.taxi_events GROUP BY time ORDER BY time",
           "refId": "A"
         }
       ],
@@ -121,7 +129,7 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toHour(ts) as hour, event, count() as cnt FROM default.taxi_events GROUP BY hour, event ORDER BY hour",
+          "rawSql": "SELECT toHour(ts) as hour, event, count() as events FROM default.taxi_events GROUP BY hour, event ORDER BY hour",
           "refId": "A"
         }
       ]
@@ -229,7 +237,7 @@
   "schemaVersion": 39,
   "tags": ["taxi", "clickhouse", "realtime"],
   "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
+  "time": { "from": "2020-01-01T00:00:00.000Z", "to": "2020-01-02T00:00:00.000Z" },
   "timepicker": {},
   "timezone": "Asia/Seoul",
   "title": "NYC Taxi Events",

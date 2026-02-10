@@ -11,7 +11,81 @@ scrape_configs:
     static_configs:
       - targets: ["kafka-exporter:9308"]
 
-  - job_name: "flink"
+  - job_name: "blackbox-http"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
     static_configs:
-      - targets: ["jobmanager:9249"]
-    metrics_path: /metrics
+      - targets:
+          - http://clickhouse:8123/ping
+          - http://grafana:3000/api/health
+          - http://loki:3100/ready
+          - http://100.80.192.42:8084/overview
+          - http://100.115.77.80:8080
+          - http://100.84.209.31:8081
+          - http://100.84.209.31:8082
+          - http://100.98.222.120:8083
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+      - source_labels: [__param_target]
+        regex: ".*clickhouse.*"
+        target_label: service
+        replacement: "ClickHouse"
+      - source_labels: [__param_target]
+        regex: ".*grafana.*"
+        target_label: service
+        replacement: "Grafana"
+      - source_labels: [__param_target]
+        regex: ".*loki.*"
+        target_label: service
+        replacement: "Loki"
+      - source_labels: [__param_target]
+        regex: ".*8084.*"
+        target_label: service
+        replacement: "Flink"
+      - source_labels: [__param_target]
+        regex: ".*8080.*"
+        target_label: service
+        replacement: "Nginx LB"
+      - source_labels: [__param_target]
+        regex: ".*8081.*"
+        target_label: service
+        replacement: "Ingestor 1"
+      - source_labels: [__param_target]
+        regex: ".*8082.*"
+        target_label: service
+        replacement: "Ingestor 2"
+      - source_labels: [__param_target]
+        regex: ".*8083.*"
+        target_label: service
+        replacement: "Ingestor 3"
+
+  - job_name: "blackbox-tcp"
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets:
+          - 100.115.77.80:9092
+        labels:
+          service: "Kafka 1"
+      - targets:
+          - 100.115.77.80:9094
+        labels:
+          service: "Kafka 2"
+      - targets:
+          - 100.99.202.73:9096
+        labels:
+          service: "Kafka 3"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
