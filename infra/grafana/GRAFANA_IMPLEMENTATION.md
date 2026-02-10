@@ -140,12 +140,70 @@ Promtail → Loki를 통한 Docker 컨테이너 로그 수집/조회.
 | 4 | ClickHouse Logs | `{job="docker", container="clickhouse"}` |
 | 3 | All Container Logs | `{job="docker"}` |
 
-### Promtail 수집 대상 컨테이너
+### Promtail 수집 대상 컨테이너 (로컬)
 
 **Pipeline:** `kafka-[0-9]+`, `kafka-ui`, `flink-jobmanager`, `flink-taskmanager`, `ingestor-[0-9]+`, `ingestor-lb`
 **Infra:** `clickhouse`, `grafana`, `kafka-exporter`, `loki`, `prometheus`, `promtail`
 
-> **Note:** Promtail은 같은 Docker host의 컨테이너 로그만 수집 가능. 원격 머신의 서비스 로그를 수집하려면 해당 머신에도 Promtail을 배포하고 동일한 Loki로 push해야 함.
+### 원격 로그 수집 (Loki Docker Logging Driver)
+
+원격 머신의 Docker 컨테이너 로그를 Promtail 없이 중앙 Loki로 전송한다. Tailscale 네트워크를 통해 Loki 서버(`100.98.239.46:3100`)에 접근.
+
+```
+팀원 머신 (macOS/Windows/Linux)          Loki 서버
+┌─────────────────────────┐             ┌──────────┐
+│ Docker (loki log driver)│ ──push──▶   │ Loki     │
+│ kafka, flink, ...       │  Tailscale  │ :3100    │
+└─────────────────────────┘             └──────────┘
+```
+
+#### Linux
+
+```bash
+# infra/promtail-remote/ 디렉토리에서:
+chmod +x setup.sh && ./setup.sh
+```
+
+- Loki Docker 플러그인 설치 + `/etc/docker/daemon.json` 설정 + Docker 재시작 자동화
+- 기존 컨테이너는 `docker compose up -d --force-recreate`로 재생성 필요
+
+#### macOS (Docker Desktop)
+
+```bash
+# 1. 플러그인 설치
+docker plugin install grafana/loki-docker-driver:2.9.1 --alias loki --grant-all-permissions
+
+# 2. Docker Desktop → Settings → Docker Engine에 추가:
+```
+
+```json
+{
+  "log-driver": "loki",
+  "log-opts": {
+    "loki-url": "http://100.98.239.46:3100/loki/api/v1/push",
+    "loki-batch-size": "400",
+    "loki-external-labels": "host=<내-이름>,job=docker"
+  }
+}
+```
+
+```
+# 3. Apply & Restart 클릭
+```
+
+#### Windows (Docker Desktop)
+
+macOS와 동일. Docker Desktop → Settings → Docker Engine에서 같은 JSON 추가 후 Apply & Restart.
+
+#### 확인
+
+```logql
+{job="docker", host="<머신-이름>"}
+```
+
+#### 롤백
+
+daemon.json에서 `log-driver`, `log-opts` 항목을 제거하고 Docker 재시작.
 
 ---
 
