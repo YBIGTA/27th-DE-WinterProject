@@ -26,18 +26,26 @@
     },
     {
       "id": 2,
-      "title": "Events by Type",
-      "type": "piechart",
+      "title": "Avg Trip Duration",
+      "type": "stat",
       "gridPos": { "h": 8, "w": 8, "x": 4, "y": 0 },
       "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT event, count() as cnt FROM default.taxi_events GROUP BY event ORDER BY cnt DESC",
+          "rawSql": "SELECT round(avg(duration), 1) as avg_minutes FROM (SELECT trip_id, dateDiff('minute', minIf(ts, event='PICKUP'), maxIf(ts, event='DROPOFF')) as duration FROM default.taxi_events GROUP BY trip_id HAVING duration > 0 AND duration < 180)",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 30 }, { "color": "red", "value": 60 }] },
+          "unit": "min"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 3,
@@ -68,7 +76,7 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toStartOfMinute(ts) as time, event, count() as cnt FROM default.taxi_events WHERE ts >= $__fromTime AND ts <= $__toTime GROUP BY time, event ORDER BY time",
+          "rawSql": "SELECT toStartOfMinute(ts) as time, event, count() as events FROM default.taxi_events GROUP BY time, event ORDER BY time",
           "refId": "A"
         }
       ],
@@ -87,7 +95,7 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toString(zone_id) as zone, count() as cnt FROM default.taxi_events WHERE event = 'PICKUP' GROUP BY zone_id ORDER BY cnt DESC LIMIT 10",
+          "rawSql": "SELECT toString(zone_id) as zone, count() as demand FROM default.taxi_events WHERE event = 'PICKUP' GROUP BY zone_id ORDER BY demand DESC LIMIT 10",
           "refId": "A"
         }
       ]
@@ -102,7 +110,7 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toStartOfMinute(ts) as time, count() as events_per_min FROM default.taxi_events WHERE ts >= $__fromTime AND ts <= $__toTime GROUP BY time ORDER BY time",
+          "rawSql": "SELECT toStartOfMinute(ts) as time, count() as events_per_min FROM default.taxi_events GROUP BY time ORDER BY time",
           "refId": "A"
         }
       ],
@@ -121,54 +129,119 @@
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "sql",
-          "rawSql": "SELECT toHour(ts) as hour, event, count() as cnt FROM default.taxi_events GROUP BY hour, event ORDER BY hour",
+          "rawSql": "SELECT toString(toHour(ts)) as hour, countIf(event = 'PICKUP') as PICKUP, countIf(event = 'DROPOFF') as DROPOFF, countIf(event = 'IN_TRANSIT') as IN_TRANSIT FROM default.taxi_events GROUP BY hour ORDER BY toHour(ts)",
           "refId": "A"
         }
       ]
     },
     {
       "id": 9,
-      "title": "Pickup Demand Heatmap",
+      "title": "Pickup Demand by Zone",
       "type": "geomap",
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 16 },
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 24 },
       "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
           "queryType": "table",
-          "rawSql": "SELECT z.lat as latitude, z.lon as longitude, z.zone_name, z.borough, count() as demand FROM default.taxi_events e JOIN default.taxi_zones z ON e.zone_id = z.zone_id WHERE e.event = 'PICKUP' GROUP BY z.lat, z.lon, z.zone_name, z.borough ORDER BY demand DESC",
+          "rawSql": "SELECT toString(z.zone_id) as zone_id, z.zone_name, z.borough, count() as demand FROM default.taxi_events e JOIN default.taxi_zones z ON e.zone_id = z.zone_id WHERE e.event = 'PICKUP' AND z.zone_id NOT IN (57, 104, 105, 264, 265) GROUP BY z.zone_id, z.zone_name, z.borough ORDER BY demand DESC",
           "refId": "A"
         }
       ],
       "options": {
         "view": {
           "id": "coords",
-          "lat": 40.730,
-          "lon": -73.935,
+          "lat": 40.65,
+          "lon": -73.94,
           "zoom": 10
         },
         "basemap": {
-          "type": "default",
-          "name": "OpenStreetMap"
+          "name": "CartoDB Dark Matter",
+          "type": "xyz",
+          "config": {
+            "url": "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+            "attribution": "CartoDB"
+          }
         },
         "layers": [
           {
-            "type": "heatmap",
-            "name": "Pickup Heatmap",
+            "type": "geojson",
+            "name": "No Data (0)",
             "config": {
-              "weight": { "field": "demand", "fixed": 1, "min": 0, "max": 1 },
-              "radius": 20,
-              "blur": 15,
-              "opacity": 0.6
+              "src": "public/geojson/taxi_zones_t0_none.geojson",
+              "style": { "color": { "fixed": "#e0e0e0" }, "opacity": 0.6, "fillOpacity": 0.35 }
             },
-            "location": {
-              "mode": "coords",
-              "latitude": "latitude",
-              "longitude": "longitude"
-            }
+            "opacity": 0.6, "tooltip": true
+          },
+          {
+            "type": "geojson",
+            "name": "1-10",
+            "config": {
+              "src": "public/geojson/taxi_zones_t1_minimal.geojson",
+              "style": { "color": { "fixed": "#d9f0d3" }, "opacity": 0.7, "fillOpacity": 0.6 }
+            },
+            "opacity": 0.7, "tooltip": true
+          },
+          {
+            "type": "geojson",
+            "name": "11-50",
+            "config": {
+              "src": "public/geojson/taxi_zones_t2_low.geojson",
+              "style": { "color": { "fixed": "#a1d99b" }, "opacity": 0.7, "fillOpacity": 0.6 }
+            },
+            "opacity": 0.7, "tooltip": true
+          },
+          {
+            "type": "geojson",
+            "name": "51-200",
+            "config": {
+              "src": "public/geojson/taxi_zones_t3_medium.geojson",
+              "style": { "color": { "fixed": "#fddd7e" }, "opacity": 0.8, "fillOpacity": 0.65 }
+            },
+            "opacity": 0.8, "tooltip": true
+          },
+          {
+            "type": "geojson",
+            "name": "201-800",
+            "config": {
+              "src": "public/geojson/taxi_zones_t4_mid.geojson",
+              "style": { "color": { "fixed": "#fdae61" }, "opacity": 0.8, "fillOpacity": 0.65 }
+            },
+            "opacity": 0.8, "tooltip": true
+          },
+          {
+            "type": "geojson",
+            "name": "801-2000",
+            "config": {
+              "src": "public/geojson/taxi_zones_t5_high.geojson",
+              "style": { "color": { "fixed": "#f46d43" }, "opacity": 0.8, "fillOpacity": 0.7 }
+            },
+            "opacity": 0.8, "tooltip": true
+          },
+          {
+            "type": "geojson",
+            "name": "2001-5000",
+            "config": {
+              "src": "public/geojson/taxi_zones_t6_vhigh.geojson",
+              "style": { "color": { "fixed": "#d73027" }, "opacity": 0.85, "fillOpacity": 0.75 }
+            },
+            "opacity": 0.85, "tooltip": true
+          },
+          {
+            "type": "geojson",
+            "name": "5000+",
+            "config": {
+              "src": "public/geojson/taxi_zones_t7_max.geojson",
+              "style": { "color": { "fixed": "#a50026" }, "opacity": 0.85, "fillOpacity": 0.8 }
+            },
+            "opacity": 0.85, "tooltip": true
           }
         ],
         "tooltip": { "mode": "details" }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
       }
     },
     {
@@ -229,7 +302,7 @@
   "schemaVersion": 39,
   "tags": ["taxi", "clickhouse", "realtime"],
   "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
+  "time": { "from": "2020-01-01T00:00:00.000Z", "to": "2020-01-02T00:00:00.000Z" },
   "timepicker": {},
   "timezone": "Asia/Seoul",
   "title": "NYC Taxi Events",
