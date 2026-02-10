@@ -12,12 +12,12 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
-        parallelism.default: 1
+        parallelism.default: 3
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
-      - FLINK_PARALLELISM=1
-      - FLINK_TASKMANAGER_SLOTS=2
+      - FLINK_PARALLELISM=3
+      - FLINK_TASKMANAGER_SLOTS=3
       - FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC=5
       - FLINK_WINDOW_DEMAND_MINUTES=3
       - FLINK_JDBC_BATCH_SIZE=5000
@@ -42,12 +42,12 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 2
+        taskmanager.numberOfTaskSlots: 3
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
-      - FLINK_PARALLELISM=1
-      - FLINK_TASKMANAGER_SLOTS=2
+      - FLINK_PARALLELISM=3
+      - FLINK_TASKMANAGER_SLOTS=3
       - FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC=5
       - FLINK_WINDOW_DEMAND_MINUTES=3
       - FLINK_JDBC_BATCH_SIZE=5000

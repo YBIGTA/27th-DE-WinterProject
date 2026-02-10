@@ -23,13 +23,24 @@ public class ReactorKafkaConfig {
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        props.put(ProducerConfig.LINGER_MS_CONFIG, 50);
-        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 32768);
-        props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4");
+        // --- 1. Reliability & Data Integrity (EOS) ---
+        // props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        // props.put(ProducerConfig.ACKS_CONFIG, "all");
+        // props.put(ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
+        // props.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
+
         props.put(ProducerConfig.ACKS_CONFIG, "1");
         props.put(ProducerConfig.RETRIES_CONFIG, 3);
         props.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
-        props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 67108864);
+
+
+        // --- 2. Throughput & Latency Optimization ---
+        props.put(ProducerConfig.LINGER_MS_CONFIG, 10);
+        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 65536);
+        props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4");
+
+        // --- 3. Resource Management ---
+        props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 268435456L); // 256MB
         props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 2000);
 
         // Connection timeouts to prevent hanging during startup

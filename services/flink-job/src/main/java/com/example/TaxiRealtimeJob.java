@@ -118,7 +118,7 @@ public class TaxiRealtimeJob {
     }
 
     private static class JobConfig {
-        int parallelism = 1;
+        int parallelism = 3;
         int watermarkOutOfOrdernessSec = 5;
         int windowDemandMinutes = 3;
         int jdbcBatchSize = 5000;
