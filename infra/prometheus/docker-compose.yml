@@ -5,12 +5,13 @@ services:
     restart: unless-stopped
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
+    env_file:
+      - ../../config/.env.distributed
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.yml.tmpl:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
       - prometheus_data:/prometheus
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=7d"
+    entrypoint: /entrypoint.sh
     networks:
       - kafka-network
 
