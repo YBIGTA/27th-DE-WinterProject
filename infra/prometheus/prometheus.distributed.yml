@@ -1,0 +1,50 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "kafka"
+    static_configs:
+      # Kafka brokers - JMX metrics via exporter
+      - targets:
+          - "${KAFKA_1_IP}:9308"
+        labels:
+          broker: "kafka-1"
+          instance: "${KAFKA_1_IP}"
+
+  - job_name: "ingestor"
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - "${INGESTOR_1_IP}:${INGESTOR_1_PORT}"
+          - "${INGESTOR_2_IP}:${INGESTOR_2_PORT}"
+          - "${INGESTOR_3_IP}:${INGESTOR_3_PORT}"
+        labels:
+          service: "ingestor"
+
+  - job_name: "nginx"
+    static_configs:
+      - targets:
+          - "${NGINX_IP}:${NGINX_LB_PORT}"
+        labels:
+          service: "nginx-lb"
+
+  - job_name: "clickhouse"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "${CLICKHOUSE_IP}:9363"
+        labels:
+          service: "clickhouse"
+
+  - job_name: "flink"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "${FLINK_IP}:${FLINK_JOBMANAGER_PORT}"
+        labels:
+          service: "flink-jobmanager"

@@ -1,0 +1,28 @@
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    env_file:
+      - ../../config/.env
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.distributed.yml:/etc/prometheus/prometheus.yml.template:ro
+      - prometheus_data:/prometheus
+    command:
+      - sh
+      - -c
+      - |
+        envsubst < /etc/prometheus/prometheus.yml.template > /etc/prometheus/prometheus.yml
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.retention.time=7d
+    networks:
+      - kafka-network
+
+networks:
+  kafka-network:
+    external: true
+    name: kafka-network
+
+volumes:
+  prometheus_data:

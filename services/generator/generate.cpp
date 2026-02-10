@@ -445,7 +445,7 @@ static string resolve_ingestion_url_from_env() {
     const char* nginx_ip = getenv("NGINX_IP");
     const char* lb_port = getenv("NGINX_LB_PORT");
     if (nginx_ip && *nginx_ip && lb_port && *lb_port) {
-        return string("http://") + nginx_ip + ":" + lb_port + "/ingest";
+        return string("http://") + nginx_ip + ":" + lb_port + "/ingest/batch";
     }
 
     return "";
@@ -929,7 +929,7 @@ private:
         int64_t current = current_delay_us_.load(std::memory_order_acquire);
         if (current == 0) return;
 
-        int64_t new_delay = std::max(static_cast<int64_t>(current * 0.9), 0L);
+        int64_t new_delay = std::max<int64_t>(static_cast<int64_t>(current * 0.9), 0L);
         if (current_delay_us_.compare_exchange_strong(current, new_delay)) {
             std::lock_guard<std::mutex> lock(log_mu_);
             std::cerr << "[RATE_LIMIT] Decreased delay: " << current/1000 << "ms -> "
