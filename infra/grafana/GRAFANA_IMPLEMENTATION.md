@@ -14,12 +14,18 @@
    │  (Taxi Data) │   │  (Metrics)  │    │   (Logs)    │
    └──────────────┘   └──────┬──────┘    └──────┬──────┘
                              │                  │
-                    ┌────────▼──────┐    ┌──────▼──────┐
-                    │ Kafka Exporter│    │  Promtail   │
-                    │  :9308        │    │  (Docker    │
-                    │ Blackbox      │    │   Logs)     │
-                    │  Exporter     │    └─────────────┘
+                    ┌────────▼──────┐    ┌──────▼──────────────┐
+                    │ Kafka Exporter│    │  Promtail (로컬)     │
+                    │  :9308        │    │  Promtail (원격)     │
+                    │ Blackbox      │    │  Loki Docker Driver  │
+                    │  Exporter     │    └──────────────────────┘
                     └───────────────┘
+
+원격 로그 수집 (Tailscale):
+┌─────────────────┐    Tailscale     ┌──────────┐
+│ 팀원 머신        │ ──push──────▶   │ Loki     │
+│ Promtail/Driver  │  100.98.239.46  │ :3100    │
+└─────────────────┘                  └──────────┘
 ```
 
 ## Datasources
@@ -83,7 +89,7 @@
 
 **UID:** `service-health-dashboard` | **Refresh:** 15s | **14 Panels**
 
-Blackbox Exporter를 통한 서비스 상태 모니터링.
+Blackbox Exporter를 통한 서비스 상태 모니터링. 로컬 서비스는 Docker DNS, 원격 서비스는 Tailscale IP로 probe.
 
 ### Overview Panels
 
@@ -97,17 +103,17 @@ Blackbox Exporter를 통한 서비스 상태 모니터링.
 
 | ID | Service | Probe Type | Target |
 |---|---|---|---|
-| 4 | ClickHouse | HTTP | `clickhouse:8123` |
-| 5 | Grafana | HTTP | `grafana:3000` |
-| 6 | Loki | HTTP | `loki:3100` |
-| 7 | Flink | HTTP | `flink-jobmanager:8084` |
-| 8 | Nginx LB | HTTP | `nginx:8080` |
-| 9 | Kafka 1 | TCP | `kafka1:9092` |
-| 10 | Kafka 2 | TCP | `kafka2:9094` |
-| 11 | Kafka 3 | TCP | `kafka3:9096` |
-| 12 | Ingestor 1 | HTTP | `ingestor1:8081` |
-| 13 | Ingestor 2 | HTTP | `ingestor2:8082` |
-| 14 | Ingestor 3 | HTTP | `ingestor3:8083` |
+| 4 | ClickHouse | HTTP | `clickhouse:8123/ping` (로컬) |
+| 5 | Grafana | HTTP | `grafana:3000/api/health` (로컬) |
+| 6 | Loki | HTTP | `loki:3100/ready` (로컬) |
+| 7 | Flink | HTTP | `100.80.192.42:8084/overview` (원격) |
+| 8 | Nginx LB | HTTP | `100.115.77.80:8080` (원격) |
+| 9 | Kafka 1 | TCP | `100.115.77.80:9092` (원격) |
+| 10 | Kafka 2 | TCP | `100.115.77.80:9094` (원격) |
+| 11 | Kafka 3 | TCP | `100.99.202.73:9096` (원격) |
+| 12 | Ingestor 1 | HTTP | `100.84.209.31:8081` (원격) |
+| 13 | Ingestor 2 | HTTP | `100.84.209.31:8082` (원격) |
+| 14 | Ingestor 3 | HTTP | `100.98.222.120:8083` (원격) |
 
 ---
 
@@ -140,41 +146,44 @@ Promtail → Loki를 통한 Docker 컨테이너 로그 수집/조회.
 | 4 | ClickHouse Logs | `{job="docker", container="clickhouse"}` |
 | 3 | All Container Logs | `{job="docker"}` |
 
-### Promtail 수집 대상 컨테이너 (로컬)
+---
 
-**Pipeline:** `kafka-[0-9]+`, `kafka-ui`, `flink-jobmanager`, `flink-taskmanager`, `ingestor-[0-9]+`, `ingestor-lb`
-**Infra:** `clickhouse`, `grafana`, `kafka-exporter`, `loki`, `prometheus`, `promtail`
+## 로그 수집 설정
 
-### 원격 로그 수집 (Loki Docker Logging Driver)
+### 로컬 Promtail (`infra/loki/`)
 
-원격 머신의 Docker 컨테이너 로그를 Promtail 없이 중앙 Loki로 전송한다. Tailscale 네트워크를 통해 Loki 서버(`100.98.239.46:3100`)에 접근.
+Docker socket(`/var/run/docker.sock`)으로 같은 머신의 컨테이너 로그 수집.
 
-```
-팀원 머신 (macOS/Windows/Linux)          Loki 서버
-┌─────────────────────────┐             ┌──────────┐
-│ Docker (loki log driver)│ ──push──▶   │ Loki     │
-│ kafka, flink, ...       │  Tailscale  │ :3100    │
-└─────────────────────────┘             └──────────┘
-```
+수집 대상 (regex 필터):
+- **Pipeline:** `kafka-[0-9]+`, `kafka-ui`, `flink-jobmanager`, `flink-taskmanager`, `ingestor-[0-9]+`, `ingestor-lb`
+- **Infra:** `clickhouse`, `grafana`, `kafka-exporter`, `loki`, `prometheus`, `promtail`
+- 라벨: `job="docker"`, `container=<name>`
 
-#### Linux
+### 원격 로그 수집 (`infra/promtail-remote/`)
 
-```bash
-# infra/promtail-remote/ 디렉토리에서:
-chmod +x setup.sh && ./setup.sh
-```
+Tailscale 네트워크를 통해 원격 머신의 Docker 로그를 중앙 Loki(`100.98.239.46:3100`)로 전송.
 
-- Loki Docker 플러그인 설치 + `/etc/docker/daemon.json` 설정 + Docker 재시작 자동화
-- 기존 컨테이너는 `docker compose up -d --force-recreate`로 재생성 필요
+#### 방법 1: Remote Promtail (권장)
 
-#### macOS (Docker Desktop)
+원격 머신에 Promtail 컨테이너를 띄워서 모든 컨테이너 로그 수집.
 
 ```bash
-# 1. 플러그인 설치
-docker plugin install grafana/loki-docker-driver:2.9.1 --alias loki --grant-all-permissions
-
-# 2. Docker Desktop → Settings → Docker Engine에 추가:
+# 원격 머신에서
+cd promtail-remote/
+HOSTNAME=$(hostname) docker compose up -d
 ```
+
+- `LOKI_URL` 환경변수로 Loki 주소 변경 가능 (기본: `http://100.98.239.46:3100`)
+- `HOSTNAME` 환경변수로 Grafana에서 호스트 구분 (`host` 라벨)
+- 컨테이너 필터 없음 (모든 Docker 컨테이너 수집)
+- Grafana에서 조회: `{host="<hostname>"}`
+
+#### 방법 2: Loki Docker Logging Driver
+
+Docker 자체 로깅 드라이버 사용. Promtail 컨테이너 불필요.
+
+- **Linux:** `setup.sh` 실행 (플러그인 설치 + daemon.json 설정 + Docker 재시작)
+- **macOS/Windows:** Docker Desktop → Settings → Docker Engine에 JSON 추가
 
 ```json
 {
@@ -187,23 +196,8 @@ docker plugin install grafana/loki-docker-driver:2.9.1 --alias loki --grant-all-
 }
 ```
 
-```
-# 3. Apply & Restart 클릭
-```
-
-#### Windows (Docker Desktop)
-
-macOS와 동일. Docker Desktop → Settings → Docker Engine에서 같은 JSON 추가 후 Apply & Restart.
-
-#### 확인
-
-```logql
-{job="docker", host="<머신-이름>"}
-```
-
-#### 롤백
-
-daemon.json에서 `log-driver`, `log-opts` 항목을 제거하고 Docker 재시작.
+- 기존 컨테이너는 `docker compose up -d --force-recreate`로 재생성 필요
+- Grafana에서 조회: `{job="docker", host="<내-이름>"}`
 
 ---
 
@@ -259,6 +253,64 @@ provisioning/geojson/
 
 ---
 
+## Docker Compose 구성
+
+### Grafana (`infra/grafana/docker-compose.yml`)
+
+```yaml
+grafana:
+  image: grafana/grafana:11.0.0
+  ports: "${GRAFANA_PORT:-3000}:3000"
+  plugins: grafana-clickhouse-datasource
+  volumes:
+    - ./provisioning:/etc/grafana/provisioning      # dashboards, datasources
+    - ./provisioning/geojson:/usr/share/grafana/public/geojson:ro  # choropleth
+```
+
+### Prometheus Stack (`infra/prometheus/docker-compose.yml`)
+
+```yaml
+prometheus:        prom/prometheus:v2.51.0        :9090  # 메트릭 수집, 7일 보관
+blackbox-exporter: prom/blackbox-exporter:v0.25.0        # HTTP/TCP 헬스체크 (kafka-network)
+kafka-exporter:    danielqsj/kafka-exporter:v1.7.0 :9308 # Kafka consumer lag
+```
+
+모든 서비스가 `kafka-network`에 연결됨 (blackbox-exporter 포함).
+
+### Loki Stack (`infra/loki/docker-compose.yml`)
+
+```yaml
+loki:     grafana/loki:3.3.2     :3100   # 로그 저장/쿼리 (TSDB, filesystem)
+promtail: grafana/promtail:3.3.2         # Docker 컨테이너 로그 수집
+```
+
+모든 서비스는 `kafka-network` (external) 네트워크 사용.
+
+---
+
+## Prometheus Scrape Targets
+
+```yaml
+scrape_configs:
+  - job: prometheus     → localhost:9090
+  - job: kafka          → kafka-exporter:9308
+  - job: blackbox-http  → 8개 HTTP 엔드포인트:
+      - clickhouse:8123/ping (로컬)
+      - grafana:3000/api/health (로컬)
+      - loki:3100/ready (로컬)
+      - 100.80.192.42:8084/overview (Flink, 원격)
+      - 100.115.77.80:8080 (Nginx LB, 원격)
+      - 100.84.209.31:8081 (Ingestor 1, 원격)
+      - 100.84.209.31:8082 (Ingestor 2, 원격)
+      - 100.98.222.120:8083 (Ingestor 3, 원격)
+  - job: blackbox-tcp   → 3개 Kafka 브로커:
+      - 100.115.77.80:9092 (Kafka 1, 원격)
+      - 100.115.77.80:9094 (Kafka 2, 원격)
+      - 100.99.202.73:9096 (Kafka 3, 원격)
+```
+
+---
+
 ## Troubleshooting Log
 
 ### 1. 마커가 아프리카 서쪽 바다(0,0)에 찍히는 문제
@@ -301,54 +353,8 @@ provisioning/geojson/
 - **원인**: 4개 tier만으로는 극단적 편향 분포(median=45, max=13047)를 표현 못함
 - **해결**: 8단계로 세분화, 데이터 분위수(P25/P50/P75/P90) 기반 임계값 설정
 
----
+### 6. Service Health 대시보드 "No data" 문제
 
-## Docker Compose 구성
-
-### Grafana (`infra/grafana/docker-compose.yml`)
-
-```yaml
-grafana:
-  image: grafana/grafana:11.0.0
-  ports: "${GRAFANA_PORT:-3000}:3000"
-  plugins: grafana-clickhouse-datasource
-  volumes:
-    - ./provisioning:/etc/grafana/provisioning      # dashboards, datasources
-    - ./provisioning/geojson:/usr/share/grafana/public/geojson:ro  # choropleth
-```
-
-### Prometheus Stack (`infra/prometheus/docker-compose.yml`)
-
-```yaml
-prometheus:       prom/prometheus:v2.51.0      :9090   # 메트릭 수집, 7일 보관
-blackbox-exporter: prom/blackbox-exporter:v0.25.0       # HTTP/TCP 헬스체크
-kafka-exporter:   danielqsj/kafka-exporter:v1.7.0 :9308 # Kafka consumer lag
-```
-
-### Loki Stack (`infra/loki/docker-compose.yml`)
-
-```yaml
-loki:     grafana/loki:3.3.2     :3100   # 로그 저장/쿼리 (TSDB, filesystem)
-promtail: grafana/promtail:3.3.2         # Docker 컨테이너 로그 수집
-```
-
-모든 서비스는 `kafka-network` (external) 네트워크 사용.
-
----
-
-## Prometheus Scrape Targets
-
-```yaml
-scrape_configs:
-  - job: prometheus        → localhost:9090
-  - job: kafka             → kafka-exporter:9308
-  - job: blackbox-http     → 7개 HTTP 엔드포인트 (ClickHouse, Grafana, Loki, Flink, Nginx, Ingestors)
-  - job: blackbox-tcp      → 3개 Kafka 브로커 (9092, 9094, 9096)
-```
-
-## Promtail 수집 설정
-
-- Docker socket(`/var/run/docker.sock`)으로 컨테이너 자동 발견
-- Pipeline: `kafka-[0-9]+`, `kafka-ui`, `flink-jobmanager`, `flink-taskmanager`, `ingestor-[0-9]+`, `ingestor-lb`
-- Infra: `clickhouse`, `grafana`, `kafka-exporter`, `loki`, `prometheus`, `promtail`
-- 라벨: `job="docker"`, `container=<name>`
+- **증상**: 모든 서비스가 No data로 표시
+- **원인**: blackbox-exporter가 `network_mode: host`로 설정되어 `kafka-network`에 미연결 → Prometheus가 `blackbox-exporter:9115` DNS 해석 불가
+- **해결**: `network_mode: host` 제거, `kafka-network` 연결. macOS Docker Desktop에서는 bridge 네트워크에서도 Tailscale IP 접근 가능
