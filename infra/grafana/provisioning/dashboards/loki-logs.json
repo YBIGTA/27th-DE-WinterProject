@@ -8,7 +8,7 @@
       "id": 1,
       "title": "Log Volume by Container",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
@@ -28,9 +28,9 @@
     },
     {
       "id": 2,
-      "title": "Error Logs",
+      "title": "Error Logs (All Services)",
       "type": "logs",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
@@ -42,29 +42,90 @@
       "options": {
         "showTime": true,
         "showLabels": true,
-        "showCommonLabels": false,
         "wrapLogMessage": true,
         "sortOrder": "Descending",
         "enableLogDetails": true
       }
     },
     {
-      "id": 3,
-      "title": "All Container Logs",
+      "id": 10,
+      "title": "Kafka Broker Logs",
       "type": "logs",
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 18 },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 14 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{job=\"docker\"}",
+          "expr": "{job=\"docker\", container=~\"kafka-[0-9]+\"}",
           "refId": "A"
         }
       ],
       "options": {
         "showTime": true,
         "showLabels": true,
-        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    },
+    {
+      "id": 11,
+      "title": "Flink Logs",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"docker\", container=~\"flink-.*\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    },
+    {
+      "id": 12,
+      "title": "Ingestor Logs",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"docker\", container=~\"ingestor-[0-9]+\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    },
+    {
+      "id": 13,
+      "title": "Nginx LB Logs",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"docker\", container=\"ingestor-lb\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
         "wrapLogMessage": true,
         "sortOrder": "Descending",
         "enableLogDetails": true
@@ -74,7 +135,7 @@
       "id": 4,
       "title": "ClickHouse Logs",
       "type": "logs",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 30 },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 34 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
@@ -92,105 +153,21 @@
       }
     },
     {
-      "id": 5,
-      "title": "Grafana Logs",
+      "id": 3,
+      "title": "All Container Logs",
       "type": "logs",
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 30 },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 34 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{job=\"docker\", container=\"grafana\"}",
+          "expr": "{job=\"docker\"}",
           "refId": "A"
         }
       ],
       "options": {
         "showTime": true,
-        "showLabels": false,
-        "wrapLogMessage": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true
-      }
-    },
-    {
-      "id": 6,
-      "title": "Prometheus Logs",
-      "type": "logs",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 40 },
-      "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{job=\"docker\", container=\"prometheus\"}",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": false,
-        "wrapLogMessage": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true
-      }
-    },
-    {
-      "id": 7,
-      "title": "Kafka Exporter Logs",
-      "type": "logs",
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 40 },
-      "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{job=\"docker\", container=\"kafka-exporter\"}",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": false,
-        "wrapLogMessage": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true
-      }
-    },
-    {
-      "id": 8,
-      "title": "Loki Logs",
-      "type": "logs",
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 50 },
-      "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{job=\"docker\", container=\"loki\"}",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": false,
-        "wrapLogMessage": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true
-      }
-    },
-    {
-      "id": 9,
-      "title": "Promtail Logs",
-      "type": "logs",
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 50 },
-      "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{job=\"docker\", container=\"promtail\"}",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": false,
+        "showLabels": true,
         "wrapLogMessage": true,
         "sortOrder": "Descending",
         "enableLogDetails": true
@@ -199,7 +176,7 @@
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["loki", "logs", "monitoring"],
+  "tags": ["loki", "logs", "pipeline"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},

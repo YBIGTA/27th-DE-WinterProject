@@ -17,9 +17,9 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
-          - http://clickhouse:8123/ping
-          - http://grafana:3000/api/health
-          - http://loki:3100/ready
+          - http://localhost:8123/ping
+          - http://localhost:3000/api/health
+          - http://localhost:3100/ready
           - http://100.80.192.42:8084/overview
           - http://100.115.77.80:8080
           - http://100.84.209.31:8081
@@ -31,17 +31,17 @@ scrape_configs:
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: blackbox-exporter:9115
+        replacement: localhost:9115
       - source_labels: [__param_target]
-        regex: ".*clickhouse.*"
+        regex: ".*8123.*"
         target_label: service
         replacement: "ClickHouse"
       - source_labels: [__param_target]
-        regex: ".*grafana.*"
+        regex: ".*3000.*"
         target_label: service
         replacement: "Grafana"
       - source_labels: [__param_target]
-        regex: ".*loki.*"
+        regex: ".*3100.*"
         target_label: service
         replacement: "Loki"
       - source_labels: [__param_target]
@@ -88,4 +88,4 @@ scrape_configs:
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: blackbox-exporter:9115
+        replacement: localhost:9115

@@ -15,7 +15,7 @@ scrape_configs:
         refresh_interval: 5s
     relabel_configs:
       - source_labels: ['__meta_docker_container_name']
-        regex: '/(clickhouse|grafana|kafka-exporter|loki|prometheus|promtail)'
+        regex: '/(kafka-[0-9]+|kafka-ui|flink-jobmanager|flink-taskmanager|ingestor-[0-9]+|ingestor-lb|clickhouse|grafana|kafka-exporter|loki|prometheus|promtail)'
         action: keep
       - target_label: 'job'
         replacement: 'docker'

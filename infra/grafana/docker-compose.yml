@@ -14,7 +14,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./provisioning:/etc/grafana/provisioning
-      - ./provisioning/geojson/taxi_zones.geojson:/usr/share/grafana/public/geojson/taxi_zones.geojson:ro
+      - ./provisioning/geojson:/usr/share/grafana/public/geojson:ro
     networks:
       - kafka-network
 
