@@ -1,41 +1,56 @@
 package com.example;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
-import org.apache.flink.connector.jdbc.*;
+import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
+import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
+import org.apache.flink.connector.jdbc.JdbcSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
-import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
-
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.util.OutputTag;
 
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class TaxiRealtimeJob {
+
+    // 늦게 도착해서 버린 이벤트(관측용)
+    private static final OutputTag<TaxiEvent> LATE_EVENTS =
+            new OutputTag<TaxiEvent>("late-events") {};
+
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         JobConfig jobConfig = loadConfigFromEnv();
 
+        // ✅ 기본 parallelism=6 (env에 FLINK_PARALLELISM 있으면 덮어씀)
         env.setParallelism(jobConfig.parallelism);
 
         String bootstrap = System.getenv("FLINK_KAFKA_BOOTSTRAP_SERVERS");
         if (bootstrap == null || bootstrap.isBlank()) {
             bootstrap = args.length > 0 ? args[0] : "kafka:29092";
         }
-        // ✅ Tailscale 연결 시 이 주소를 Tailscale IP로 변경하면 됩니다.
+
         String chUrl = System.getenv("FLINK_CLICKHOUSE_URL");
         if (chUrl == null || chUrl.isBlank()) {
             String chHost = System.getenv("FLINK_CLICKHOUSE_HOST");
@@ -50,25 +65,31 @@ public class TaxiRealtimeJob {
                 chUrl = args.length > 1 ? args[1] : "jdbc:clickhouse://clickhouse:8123/" + fallbackDb;
             }
         }
+
         String clickhouseTable = sanitizeIdentifier(jobConfig.clickhouseTable, "taxi_events");
-        String insertSql = "INSERT INTO " + clickhouseTable + " (trip_id, ts, zone_id, event) VALUES (?, ?, ?, ?)";
+        String insertSql =
+                "INSERT INTO " + clickhouseTable + " (trip_id, ts, zone_id, event) VALUES (?, ?, ?, ?)";
 
         System.out.printf(
-                "[CONFIG] topic=%s, groupId=%s, bootstrap=%s, clickhouseUrl=%s, sinkEnabled=%s%n",
-                jobConfig.kafkaTopic, jobConfig.kafkaGroupId, bootstrap, chUrl, jobConfig.enableClickhouseSink
+                "[CONFIG] parallelism=%d, topic=%s, groupId=%s, bootstrap=%s, clickhouseUrl=%s, sinkEnabled=%s, outOfOrder=%ss, idleCleanup=%smin%n",
+                jobConfig.parallelism,
+                jobConfig.kafkaTopic,
+                jobConfig.kafkaGroupId,
+                bootstrap,
+                chUrl,
+                jobConfig.enableClickhouseSink,
+                jobConfig.watermarkOutOfOrdernessSec,
+                jobConfig.idleCleanupMinutes
         );
 
-        // 1. 안전한 역직렬화 (Jackson ObjectMapper 직접 사용)
+        // 1) 안전 역직렬화
         DeserializationSchema<TaxiEvent> safeSchema = new SafeTaxiEventSchema();
 
-        // 2. 워터마크 전략 (NPE 방어)
+        // 2) 워터마크 전략 (event.ts 기반)
         WatermarkStrategy<TaxiEvent> watermarkStrategy = WatermarkStrategy
                 .<TaxiEvent>forBoundedOutOfOrderness(Duration.ofSeconds(jobConfig.watermarkOutOfOrdernessSec))
-                .withTimestampAssigner((event, timestamp) -> {
-                    if (event == null || event.ts == null) return Long.MIN_VALUE;
-                    try { return Instant.parse(event.ts).toEpochMilli(); }
-                    catch (Exception e) { return Long.MIN_VALUE; }
-                });
+                .withTimestampAssigner((event, timestamp) -> parseTsOrMin(event))
+                .withIdleness(Duration.ofSeconds(30));
 
         KafkaSource<TaxiEvent> source = KafkaSource.<TaxiEvent>builder()
                 .setBootstrapServers(bootstrap)
@@ -78,16 +99,36 @@ public class TaxiRealtimeJob {
                 .setValueOnlyDeserializer(safeSchema)
                 .build();
 
-        // 3. 베이스 스트림 (가공 로직)
-        DataStream<TaxiEvent> baseStream = env.fromSource(source, watermarkStrategy, "kafka-source")
+        // 3) 원본 스트림 (ts 파싱 검증 포함)
+        DataStream<TaxiEvent> rawStream = env.fromSource(source, watermarkStrategy, "kafka-source")
                 .filter(e -> {
                     if (e == null || e.ts == null || e.trip_id == null) return false;
                     try { Instant.parse(e.ts); return true; } catch (Exception ex) { return false; }
-                })
+                });
+
+        // ✅ 4) trip_id 단위 순서성 보장: 버퍼링+재정렬(event-time) + idle cleanup(processing-time)
+        long idleTimeoutMs = Math.max(1, jobConfig.idleCleanupMinutes) * 60_000L;
+
+        // ⚠️ Side output을 쓰려면 타입이 SingleOutputStreamOperator 여야 함
+        SingleOutputStreamOperator<TaxiEvent> orderedPerTrip = rawStream
+                .keyBy(e -> e.trip_id)
+                .process(new PerTripEventTimeReorder(
+                        jobConfig.watermarkOutOfOrdernessSec,
+                        LATE_EVENTS,
+                        idleTimeoutMs
+                ));
+
+        // 늦은 이벤트 모니터링
+        orderedPerTrip.getSideOutput(LATE_EVENTS)
+                .map(e -> "[LATE_DROP] trip_id=" + e.trip_id + " ts=" + e.ts + " event=" + e.event)
+                .print();
+
+        // 5) 베이스 스트림 (가공)
+        DataStream<TaxiEvent> baseStream = orderedPerTrip
                 .map(new SpatialJoinFunction())
                 .filter(e -> e.zone_id != null);
 
-        // --- 트랙 1: 실시간 공급 (ClickHouse Direct Ingest) ---
+        // --- 트랙 1: ClickHouse 적재 ---
         if (jobConfig.enableClickhouseSink) {
             baseStream.addSink(JdbcSink.sink(
                     insertSql,
@@ -100,49 +141,197 @@ public class TaxiRealtimeJob {
                     JdbcExecutionOptions.builder()
                             .withBatchSize(jobConfig.jdbcBatchSize)
                             .withBatchIntervalMs(jobConfig.jdbcBatchIntervalMs)
+                            .withMaxRetries(5) 
                             .build(),
-                    new JdbcConnectionOptions.JdbcConnectionOptionsBuilder().withUrl(chUrl).withDriverName("com.clickhouse.jdbc.ClickHouseDriver").build()
+                    new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                            .withUrl(chUrl)
+                            .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
+                            .build()
             ));
         } else {
             System.out.println("[WARN] ClickHouse sink disabled by FLINK_ENABLE_CLICKHOUSE_SINK=false");
         }
 
-        // --- 트랙 2: 3분 수요 집계 (ML용) ---
+        // --- 트랙 2: 3분 수요 집계 (1분 슬라이딩) ---
         baseStream.filter(e -> "PICKUP".equals(normType(e.event)))
                 .keyBy(e -> e.zone_id)
-                .window(TumblingEventTimeWindows.of(Time.minutes(jobConfig.windowDemandMinutes)))
+                .window(SlidingEventTimeWindows.of(Time.minutes(3), Time.minutes(1)))
                 .aggregate(new DemandAggregator(), new DemandWindowFn())
-                .print(); 
+                .print();
 
-        env.execute("Taxi Reliable Job (V13.1-Release)");
+        env.execute("Taxi Reliable Job (Ordered + Cleanup)");
     }
 
+    /**
+     * ✅ [핵심] trip_id(per-key) 단위 event-time 재정렬 + late drop + idle cleanup
+     */
+    public static class PerTripEventTimeReorder extends KeyedProcessFunction<Long, TaxiEvent, TaxiEvent> {
+        private final long latenessMs;
+        private final OutputTag<TaxiEvent> lateTag;
+        private final long idleTimeoutMs;
+
+        private transient ListState<TaxiEvent> bufferState;
+        private transient ValueState<Long> lastEmittedTs;
+
+        private transient ValueState<Long> lastSeenProcTime;
+        private transient ValueState<Long> cleanupTimerProcTs;
+
+        public PerTripEventTimeReorder(int outOfOrdernessSec,
+                                      OutputTag<TaxiEvent> lateTag,
+                                      long idleTimeoutMs) {
+            this.latenessMs = Math.max(0, outOfOrdernessSec) * 1000L;
+            this.lateTag = lateTag;
+            this.idleTimeoutMs = idleTimeoutMs;
+        }
+
+        @Override
+        public void open(org.apache.flink.configuration.Configuration parameters) {
+            bufferState = getRuntimeContext().getListState(
+                    new ListStateDescriptor<>("reorder-buffer", TaxiEvent.class)
+            );
+            lastEmittedTs = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("last-emitted-ts", Long.class)
+            );
+
+            lastSeenProcTime = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("last-seen-proc-time", Long.class)
+            );
+            cleanupTimerProcTs = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("cleanup-timer-proc-ts", Long.class)
+            );
+        }
+
+        @Override
+        public void processElement(TaxiEvent e, Context ctx, Collector<TaxiEvent> out) throws Exception {
+            long eventTs = parseTsOrMin(e);
+            if (eventTs == Long.MIN_VALUE) {
+                ctx.output(lateTag, e);
+                return;
+            }
+
+            long wm = ctx.timerService().currentWatermark();
+
+            // watermark보다 과거면 이미 late → drop
+            if (wm != Long.MIN_VALUE && eventTs <= wm) {
+                ctx.output(lateTag, e);
+                return;
+            }
+
+            // 버퍼 적재
+            bufferState.add(e);
+
+            // event-time flush 시도
+            ctx.timerService().registerEventTimeTimer(eventTs + latenessMs);
+
+            // ✅ idle cleanup 타이머 갱신 (processing time)
+            long now = ctx.timerService().currentProcessingTime();
+            lastSeenProcTime.update(now);
+
+            Long prevCleanup = cleanupTimerProcTs.value();
+            long nextCleanup = now + idleTimeoutMs;
+
+            if (prevCleanup != null) {
+                ctx.timerService().deleteProcessingTimeTimer(prevCleanup);
+            }
+            ctx.timerService().registerProcessingTimeTimer(nextCleanup);
+            cleanupTimerProcTs.update(nextCleanup);
+        }
+
+        @Override
+        public void onTimer(long timestamp, OnTimerContext ctx, Collector<TaxiEvent> out) throws Exception {
+            // 1) processing-time cleanup
+            Long cleanupTs = cleanupTimerProcTs.value();
+            if (cleanupTs != null && timestamp == cleanupTs) {
+                Long lastSeen = lastSeenProcTime.value();
+                long now = ctx.timerService().currentProcessingTime();
+
+                if (lastSeen == null || now - lastSeen >= idleTimeoutMs - 5) {
+                    bufferState.clear();
+                    lastEmittedTs.clear();
+                    lastSeenProcTime.clear();
+                    cleanupTimerProcTs.clear();
+                }
+                return;
+            }
+
+            // 2) event-time flush
+            long wm = ctx.timerService().currentWatermark();
+            if (wm == Long.MIN_VALUE) return;
+
+            Long last = lastEmittedTs.value();
+            long lastTs = (last == null) ? Long.MIN_VALUE : last;
+
+            ArrayList<TaxiEvent> all = new ArrayList<>();
+            for (TaxiEvent e : bufferState.get()) all.add(e);
+            if (all.isEmpty()) return;
+
+            all.sort((a, b) -> Long.compare(parseTsOrMin(a), parseTsOrMin(b)));
+
+            ArrayList<TaxiEvent> remain = new ArrayList<>();
+
+            for (TaxiEvent e : all) {
+                long ts = parseTsOrMin(e);
+
+                if (ts <= wm) {
+                    if (ts < lastTs) {
+                        ctx.output(lateTag, e);
+                    } else {
+                        out.collect(e);
+                        lastTs = ts;
+                    }
+                } else {
+                    remain.add(e);
+                }
+            }
+
+            bufferState.update(remain);
+            lastEmittedTs.update(lastTs);
+        }
+    }
+
+    private static long parseTsOrMin(TaxiEvent event) {
+        if (event == null || event.ts == null) return Long.MIN_VALUE;
+        try { return Instant.parse(event.ts).toEpochMilli(); }
+        catch (Exception e) { return Long.MIN_VALUE; }
+    }
+
+    // ---------------------------
+    // Config / Utils
+    // ---------------------------
     private static class JobConfig {
         int parallelism = 3;
         int watermarkOutOfOrdernessSec = 5;
-        int windowDemandMinutes = 3;
+        int idleCleanupMinutes = 20;
+
         int jdbcBatchSize = 5000;
-        int jdbcBatchIntervalMs = 5000;
+        int jdbcBatchIntervalMs = 1000;
+
         String kafkaTopic = "taxi-event-data";
         String kafkaGroupId = "taxi-realtime-flink";
+
         String clickhouseDatabase = "default";
         String clickhouseTable = "taxi_events";
-        int taskmanagerSlots = 2;
+
         boolean enableClickhouseSink = true;
     }
 
     private static JobConfig loadConfigFromEnv() {
         JobConfig cfg = new JobConfig();
+
+        // env가 있으면 덮어쓰기, 없으면 기본값 유지
         cfg.parallelism = getEnvInt("FLINK_PARALLELISM", cfg.parallelism);
         cfg.kafkaTopic = getEnvString("FLINK_KAFKA_TOPIC", cfg.kafkaTopic);
         cfg.kafkaGroupId = getEnvString("FLINK_KAFKA_GROUP_ID", cfg.kafkaGroupId);
-        cfg.taskmanagerSlots = getEnvInt("FLINK_TASKMANAGER_SLOTS", cfg.taskmanagerSlots);
+
         cfg.clickhouseDatabase = getEnvString("FLINK_CLICKHOUSE_DATABASE", cfg.clickhouseDatabase);
         cfg.clickhouseTable = getEnvString("FLINK_CLICKHOUSE_TABLE", cfg.clickhouseTable);
+
         cfg.watermarkOutOfOrdernessSec = getEnvInt("FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC", cfg.watermarkOutOfOrdernessSec);
-        cfg.windowDemandMinutes = getEnvInt("FLINK_WINDOW_DEMAND_MINUTES", cfg.windowDemandMinutes);
+        cfg.idleCleanupMinutes = getEnvInt("FLINK_IDLE_CLEANUP_MINUTES", cfg.idleCleanupMinutes);
+
         cfg.jdbcBatchSize = getEnvInt("FLINK_JDBC_BATCH_SIZE", cfg.jdbcBatchSize);
         cfg.jdbcBatchIntervalMs = getEnvInt("FLINK_JDBC_BATCH_INTERVAL_MS", cfg.jdbcBatchIntervalMs);
+
         cfg.enableClickhouseSink = getEnvBoolean("FLINK_ENABLE_CLICKHOUSE_SINK", cfg.enableClickhouseSink);
         return cfg;
     }
@@ -150,17 +339,12 @@ public class TaxiRealtimeJob {
     private static int getEnvInt(String key, int def) {
         String raw = System.getenv(key);
         if (raw == null || raw.isBlank()) return def;
-        try {
-            return Integer.parseInt(raw);
-        } catch (NumberFormatException ignored) {
-            return def;
-        }
+        try { return Integer.parseInt(raw.trim()); } catch (Exception e) { return def; }
     }
 
     private static String getEnvString(String key, String def) {
         String raw = System.getenv(key);
-        if (raw == null || raw.isBlank()) return def;
-        return raw;
+        return (raw == null || raw.isBlank()) ? def : raw;
     }
 
     private static boolean getEnvBoolean(String key, boolean def) {
@@ -180,11 +364,24 @@ public class TaxiRealtimeJob {
         return s == null ? "" : s.trim().toUpperCase().replace("_", "").replace(" ", "");
     }
 
-    // --- DTO 및 함수들 ---
+    // ---------------------------
+    // Aggregation
+    // ---------------------------
     public static class DemandRow {
-        public int zone_id; public String window_end; public long count;
-        public DemandRow(int z, String we, long c) { this.zone_id = z; this.window_end = we; this.count = c; }
-        @Override public String toString() { return String.format("[ML_DEMAND] Zone: %d, Time: %s, Count: %d", zone_id, window_end, count); }
+        public int zone_id;
+        public String window_end;
+        public long count;
+
+        public DemandRow(int z, String we, long c) {
+            this.zone_id = z;
+            this.window_end = we;
+            this.count = c;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("[ML_DEMAND] Zone: %d, Time: %s, Count: %d", zone_id, window_end, count);
+        }
     }
 
     public static class DemandAggregator implements AggregateFunction<TaxiEvent, Long, Long> {
@@ -194,7 +391,6 @@ public class TaxiRealtimeJob {
         @Override public Long merge(Long a, Long b) { return a + b; }
     }
 
-    // ✅ ProcessWindowFunction의 내부 Context를 사용하도록 수정
     public static class DemandWindowFn extends ProcessWindowFunction<Long, DemandRow, Integer, TimeWindow> {
         @Override
         public void process(Integer z, Context c, Iterable<Long> e, Collector<DemandRow> o) {
@@ -202,9 +398,12 @@ public class TaxiRealtimeJob {
         }
     }
 
-    // Jackson ObjectMapper 기반 역직렬화 (JsonDeserializationSchema 대신 직접 구현)
+    // ---------------------------
+    // Safe Deserialization
+    // ---------------------------
     public static class SafeTaxiEventSchema implements DeserializationSchema<TaxiEvent> {
         private static final long serialVersionUID = 1L;
+
         private transient ObjectMapper objectMapper;
         private transient AtomicLong errorCount;
 
@@ -213,24 +412,14 @@ public class TaxiRealtimeJob {
             objectMapper = new ObjectMapper();
             objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
             errorCount = new AtomicLong(0);
-            System.out.println("[SafeTaxiEventSchema] Initialized with ObjectMapper");
-        }
-
-        private ObjectMapper getMapper() {
-            if (objectMapper == null) {
-                objectMapper = new ObjectMapper();
-                objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-                errorCount = new AtomicLong(0);
-                System.out.println("[SafeTaxiEventSchema] Lazy-initialized ObjectMapper");
-            }
-            return objectMapper;
+            System.out.println("[SafeTaxiEventSchema] Initialized");
         }
 
         @Override
         public TaxiEvent deserialize(byte[] message) throws IOException {
             if (message == null || message.length == 0) return null;
             try {
-                return getMapper().readValue(message, TaxiEvent.class);
+                return objectMapper.readValue(message, TaxiEvent.class);
             } catch (Exception e) {
                 long count = errorCount.incrementAndGet();
                 if (count <= 5 || count % 10000 == 0) {
@@ -241,10 +430,7 @@ public class TaxiRealtimeJob {
             }
         }
 
-        @Override
-        public boolean isEndOfStream(TaxiEvent nextElement) {
-            return false;
-        }
+        @Override public boolean isEndOfStream(TaxiEvent nextElement) { return false; }
 
         @Override
         public TypeInformation<TaxiEvent> getProducedType() {
