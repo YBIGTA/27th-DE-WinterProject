@@ -73,3 +73,6 @@ Thumbs.db
 # local runtime artifacts
 .run/
 /generator/
+# Ignore model data
+model/data/processed
+model/data/raw

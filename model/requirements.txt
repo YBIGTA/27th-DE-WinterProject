@@ -1,0 +1,9 @@
+polars
+lightgbm
+scikit-learn
+onnxmltools
+skl2onnx
+jupyterlab
+matplotlib
+pyarrow
+pandas
