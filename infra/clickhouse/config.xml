@@ -1,0 +1,8 @@
+<clickhouse>
+  <merge_tree>
+    <!-- 과부하 시 insert를 늦춰서 서버를 살림 -->
+    <parts_to_delay_insert>2000</parts_to_delay_insert>
+    <!-- 더 심하면 insert를 에러로 거절 (보호) -->
+    <parts_to_throw_insert>4000</parts_to_throw_insert>
+  </merge_tree>
+</clickhouse>
