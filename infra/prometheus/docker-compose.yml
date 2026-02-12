@@ -5,12 +5,13 @@ services:
     restart: unless-stopped
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
+    env_file:
+      - ../../config/.env.distributed
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.yml.tmpl:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
       - prometheus_data:/prometheus
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=7d"
+    entrypoint: /entrypoint.sh
     networks:
       - kafka-network
 
@@ -18,9 +19,10 @@ services:
     image: prom/blackbox-exporter:v0.25.0
     container_name: blackbox-exporter
     restart: unless-stopped
-    network_mode: host
     volumes:
       - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks:
+      - kafka-network
 
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.7.0

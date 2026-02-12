@@ -17,21 +17,21 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
-          - http://localhost:8123/ping
-          - http://localhost:3000/api/health
-          - http://localhost:3100/ready
-          - http://100.80.192.42:8084/overview
-          - http://100.115.77.80:8080
-          - http://100.84.209.31:8081
-          - http://100.84.209.31:8082
-          - http://100.98.222.120:8083
+          - http://clickhouse:8123/ping
+          - http://grafana:3000/api/health
+          - http://loki:3100/ready
+          - http://${FLINK_IP}:${FLINK_JOBMANAGER_PORT}/overview
+          - http://${NGINX_IP}:${NGINX_LB_PORT}
+          - http://${INGESTOR_1_IP}:${INGESTOR_1_PORT}
+          - http://${INGESTOR_2_IP}:${INGESTOR_2_PORT}
+          - http://${INGESTOR_3_IP}:${INGESTOR_3_PORT}
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: localhost:9115
+        replacement: blackbox-exporter:9115
       - source_labels: [__param_target]
         regex: ".*8123.*"
         target_label: service
@@ -45,23 +45,23 @@ scrape_configs:
         target_label: service
         replacement: "Loki"
       - source_labels: [__param_target]
-        regex: ".*8084.*"
+        regex: ".*${FLINK_JOBMANAGER_PORT}.*"
         target_label: service
         replacement: "Flink"
       - source_labels: [__param_target]
-        regex: ".*8080.*"
+        regex: ".*${NGINX_LB_PORT}.*"
         target_label: service
         replacement: "Nginx LB"
       - source_labels: [__param_target]
-        regex: ".*8081.*"
+        regex: ".*${INGESTOR_1_PORT}.*"
         target_label: service
         replacement: "Ingestor 1"
       - source_labels: [__param_target]
-        regex: ".*8082.*"
+        regex: ".*${INGESTOR_2_PORT}.*"
         target_label: service
         replacement: "Ingestor 2"
       - source_labels: [__param_target]
-        regex: ".*8083.*"
+        regex: ".*${INGESTOR_3_PORT}.*"
         target_label: service
         replacement: "Ingestor 3"
 
@@ -71,15 +71,15 @@ scrape_configs:
       module: [tcp_connect]
     static_configs:
       - targets:
-          - 100.115.77.80:9092
+          - ${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT}
         labels:
           service: "Kafka 1"
       - targets:
-          - 100.115.77.80:9094
+          - ${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT}
         labels:
           service: "Kafka 2"
       - targets:
-          - 100.99.202.73:9096
+          - ${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT}
         labels:
           service: "Kafka 3"
     relabel_configs:
@@ -88,4 +88,4 @@ scrape_configs:
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: localhost:9115
+        replacement: blackbox-exporter:9115
