@@ -41,7 +41,7 @@ public class ReactorKafkaConfig {
 
         // --- 3. Resource Management ---
         props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 268435456L); // 256MB
-        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 2000);
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000); // Wait up to 5s for metadata/buffer in distributed setup
 
         // Connection timeouts to prevent hanging during startup
         props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5000);
@@ -49,14 +49,11 @@ public class ReactorKafkaConfig {
         props.put(ProducerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG, 60000);
         props.put(ProducerConfig.METADATA_MAX_AGE_CONFIG, 5000);
 
-        // Don't block on metadata fetch during startup
-        props.put("max.block.ms", 5000);
-
         SenderOptions<String, String> senderOptions = SenderOptions.create(props);
         senderOptions = senderOptions.stopOnError(false);
 
         // Lazy sender - doesn't connect until first send
-        senderOptions = senderOptions.maxInFlight(32);
+        senderOptions = senderOptions.maxInFlight(1024);
 
         return KafkaSender.create(senderOptions);
     }
