@@ -163,7 +163,7 @@ public class TaxiRealtimeJob {
                             .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
                             .build()
             ))
-            .setParallelism(1);
+            .setParallelism(3);
         } else {
             System.out.println("[WARN] ClickHouse sink disabled by FLINK_ENABLE_CLICKHOUSE_SINK=false");
         }
