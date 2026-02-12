@@ -63,7 +63,7 @@
       <groupId>com.clickhouse</groupId>
       <artifactId>clickhouse-jdbc</artifactId>
       <version>0.6.0</version>
-      <classifier>http</classifier> 
+      <classifier>all</classifier>
     </dependency>
   </dependencies>
 

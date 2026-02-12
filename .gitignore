@@ -40,6 +40,7 @@ cmake-build-*/
 /services/ingestor/test_ingestion$Stats.class
 /services/ingestor/.gradle/
 /services/ingestor/build/
+/services/ingestor/bin/
 /services/ingestor/out/
 /services/ingestor/.idea/
 /services/ingestor/*.iml

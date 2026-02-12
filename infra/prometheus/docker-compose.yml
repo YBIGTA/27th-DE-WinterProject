@@ -33,7 +33,7 @@ services:
       - "--kafka.server=kafka-2:29092"
       - "--kafka.server=kafka-3:29092"
     ports:
-      - "9308:9308"
+      - "${KAFKA_EXPORTER_PORT:-9308}:9308"
     networks:
       - kafka-network
 
