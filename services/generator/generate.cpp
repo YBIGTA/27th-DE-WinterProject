@@ -44,6 +44,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <csignal>
 #endif
 
 using namespace std;
@@ -513,6 +514,18 @@ public:
         return true;
     }
 
+    // Returns: 1 = got item, 0 = timeout, -1 = closed
+    int try_pop_for(T& out, std::chrono::milliseconds timeout) {
+        unique_lock<mutex> lock(mu_);
+        bool got = not_empty_.wait_for(lock, timeout, [&] { return closed_ || !queue_.empty(); });
+        if (!got) return 0;  // timeout
+        if (queue_.empty()) return -1;  // closed
+        out = std::move(queue_.front());
+        queue_.pop_front();
+        not_full_.notify_one();
+        return 1;
+    }
+
     void close() {
         lock_guard<mutex> lock(mu_);
         closed_ = true;
@@ -929,7 +942,7 @@ private:
         int64_t current = current_delay_us_.load(std::memory_order_acquire);
         if (current == 0) return;
 
-        int64_t new_delay = std::max(static_cast<int64_t>(current * 0.9), 0L);
+        int64_t new_delay = std::max(static_cast<int64_t>(current * 0.9), int64_t{0});
         if (current_delay_us_.compare_exchange_strong(current, new_delay)) {
             std::lock_guard<std::mutex> lock(log_mu_);
             std::cerr << "[RATE_LIMIT] Decreased delay: " << current/1000 << "ms -> "
@@ -1473,7 +1486,7 @@ public:
         // Sender thread pool
         size_t sender_count = thread::hardware_concurrency();
         if (sender_count == 0) sender_count = 1;
-        sender_count = ingestion_endpoint_ok ? sender_count * 2 : 1;
+        sender_count = ingestion_endpoint_ok ? min(sender_count, size_t{4}) : 1;
 
         cout << "[DEBUG] Sender count: " << sender_count << endl;
 
@@ -1495,76 +1508,38 @@ public:
                 size_t processed_count = 0;
 
                 while (true) {
-                    // Check if we should flush existing batch (timeout or size)
-                    if (accumulator.should_flush()) {
-                        auto batch = accumulator.take_batch();
-                        int64_t wait_time_us = accumulator.get_wait_time_us();
-                        if (i == 0 && processed_count < 5) {
-                            cout << "[DEBUG] Sender 0: Flushing batch (size=" << batch.size()
-                                 << ", wait=" << wait_time_us/1000 << "ms)" << endl;
-                        }
-                        post_batch_payload(batch, rate_limiter, circuit_breaker, requeue,
-                                         dlq, connection_max_failures, batch_metrics, wait_time_us);
-                        processed_count++;
-                    }
+                    // Use timed pop so batch timeout is honored even when queue is slow
+                    int pop_result = payload_queue.try_pop_for(item, std::chrono::milliseconds(batch_timeout_ms));
 
-                    // Try to get new event from payload_queue
-                    if (i == 0 && processed_count == 0) {
-                        cout << "[DEBUG] Sender 0: About to pop from payload_queue..." << endl;
-                    }
-                    bool got_new = payload_queue.pop(item);
-
-                    if (!got_new) {
-                        // Payload queue closed - flush any remaining batch
+                    if (pop_result == 1) {
+                        // Got an item — add to batch
+                        accumulator.add(std::move(item));
+                    } else if (pop_result == -1) {
+                        // Queue closed — flush remaining batch and exit
                         if (!accumulator.empty()) {
                             auto batch = accumulator.take_batch();
                             int64_t wait_time_us = accumulator.get_wait_time_us();
-                            if (i == 0) {
-                                cout << "[DEBUG] Sender 0: Flushing final batch (size=" << batch.size() << ")" << endl;
-                            }
                             post_batch_payload(batch, rate_limiter, circuit_breaker, requeue,
                                              dlq, connection_max_failures, batch_metrics, wait_time_us);
                         }
 
-                        // Check requeue for any remaining items
-                        if (i == 0) {
-                            cout << "[DEBUG] Sender 0: payload_queue closed, checking requeue..." << endl;
+                        // Drain requeue
+                        while (true) {
+                            int rq = requeue.try_pop_for(item, std::chrono::milliseconds(100));
+                            if (rq != 1) break;
+                            post_payload(item, rate_limiter, circuit_breaker, requeue, dlq, connection_max_failures);
                         }
-                        bool got_requeue = requeue.pop(item);
-                        if (!got_requeue) {
-                            if (i == 0) {
-                                cout << "[DEBUG] Sender 0: Both queues closed, exiting" << endl;
-                            }
-                            break;  // Both queues closed
-                        }
-
-                        // Requeue items bypass batching (already failed once, don't delay further)
-                        if (i == 0) {
-                            cout << "[DEBUG] Sender 0: Got item from requeue, sending individually..." << endl;
-                        }
-                        post_payload(item, rate_limiter, circuit_breaker, requeue, dlq, connection_max_failures);
-                        continue;
+                        break;
                     }
+                    // pop_result == 0: timeout — fall through to flush check
 
-                    // Add to batch
-                    if (i == 0 && processed_count == 0) {
-                        cout << "[DEBUG] Sender 0: Got item from payload_queue, adding to batch..." << endl;
-                    }
-                    accumulator.add(std::move(item));
-
-                    // Immediately flush if batch is full
+                    // Flush batch if ready (size threshold or timeout)
                     if (accumulator.should_flush()) {
                         auto batch = accumulator.take_batch();
                         int64_t wait_time_us = accumulator.get_wait_time_us();
-                        if (i == 0 && processed_count == 0) {
-                            cout << "[DEBUG] Sender 0: First batch ready (size=" << batch.size() << "), sending..." << endl;
-                        }
                         post_batch_payload(batch, rate_limiter, circuit_breaker, requeue,
                                          dlq, connection_max_failures, batch_metrics, wait_time_us);
                         processed_count++;
-                        if (i == 0 && processed_count == 1) {
-                            cout << "[DEBUG] Sender 0: First batch completed!" << endl;
-                        }
                     }
                 }
             });
@@ -2377,6 +2352,11 @@ private:
 // ==========================================
 
 int main(int argc, char** argv) {
+#if defined(__unix__) || defined(__APPLE__)
+    // Prevent SIGPIPE from killing the process when nginx/ingestor resets connection
+    signal(SIGPIPE, SIG_IGN);
+#endif
+
     string config_path = DEFAULT_CONFIG_PATH;
     if (argc > 1) {
         config_path = argv[1];
