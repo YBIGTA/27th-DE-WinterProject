@@ -118,3 +118,36 @@
 
 필요 시 정책 변경:
 - 회색 영역을 줄이려면 `PICKUP` 대신 `ALL EVENTS` 또는 `PICKUP + DROPOFF` 기준으로 변경 가능.
+
+## 6. PR 리뷰 요청 가이드 (파트별)
+
+아래처럼 파트별로 리뷰 요청하면 충돌 없이 확인하기 쉽습니다.
+
+| 파트 | 주요 파일 | 리뷰 포인트 |
+|---|---|---|
+| Generator | `services/generator/generate.cpp` | SIGPIPE 안전성, sender thread 제한, timed pop으로 배치 flush 보장 |
+| Nginx | `infra/nginx/templates/nginx.distributed.conf.template`, `infra/nginx/nginx.single-machine.conf` | `least_conn + keepalive` 분산 정상 여부, failover 설정 |
+| Ingestor | `services/ingestor/docker-compose.yml`, `services/ingestor/src/main/resources/application.yml` | buffer/batch/concurrency 튜닝값, 429/드랍 감소 |
+| Flink | `infra/flink/docker-compose.yml`, `services/flink-job/pom.xml` | 병렬도/슬롯/JDBC batch 설정, ClickHouse JDBC 의존성 누락 보완 |
+| ClickHouse | `infra/clickhouse/schema.sql` | 파티셔닝/정렬 키 변경 타당성 |
+| Grafana/Map | `infra/grafana/provisioning/dashboards/taxi-events.json`, `infra/grafana/scripts/update_geojson.py`, `infra/grafana/docker-compose.yml` | 패널 제거, 퍼센트 tier, no-cache, 15분 갱신/24시간 윈도우 |
+| Docs | `README.md`, `docs/runtime-runbook.md`, `docs/optimization-changelog.md` | 실행/정리 절차, 운영 파라미터, 검증 수치 정합성 |
+
+## 7. 부하 실험 조건/결과 (배속 기준)
+
+기준:
+- 기본 설정은 `5x` 유지 (`services/generator/config/default.yaml`).
+- 성능 실험은 `10000x`로 수행.
+- 적재율은 ClickHouse row count 차이/시간으로 측정.
+
+| 실험 단계 | 배속 | 조건 | 관찰 결과 |
+|---|---:|---|---|
+| A. 튜닝 전 | 10000x | 초기 상태 | Ingestor buffer 100%, 429 다수, circuit breaker 개입, ClickHouse 적재율 약 `200 rows/s` 수준으로 급락 |
+| B. Ingestor/Nginx/Generator 튜닝 후 | 10000x | buffer/batch/concurrency 조정 + Nginx keepalive + generator 안정화 | 429 `0`, 드랍 `0`, buffer `18~24%`, ClickHouse 적재율 약 `9,324 rows/s` |
+| C. Flink 튜닝/의존성 보완 후 | 10000x | parallelism 4, slots 4, JDBC batch 상향, `httpclient5` 추가 | Flink job `RUNNING`, ClickHouse 적재율 약 `42,808 rows/s` |
+| D. 최종 재검증 | 10000x | 스택 재기동 후 | ClickHouse 적재율 약 `55,714 rows/s` 스냅샷 확인 |
+
+Geomap 관련 추가 실험:
+- 1시간 윈도우(`PICKUP`) 활성 존: `119`
+- 24시간 윈도우(`PICKUP`) 활성 존: `239`
+- 해석: 회색 영역은 데이터 유실이 아니라, 해당 윈도우에서 `PICKUP=0`인 존을 의미
