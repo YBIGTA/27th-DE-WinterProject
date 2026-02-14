@@ -6,7 +6,7 @@ date_range:
   end: "2020-12"
 
 playback:
-  speed: 300
+  speed: 5
 
 ingestion_url: "http://localhost:8080/ingest"
 
