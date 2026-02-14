@@ -25,10 +25,10 @@ Reliable, scalable, fault-tolerant data pipeline simulation project.
 ```
 
 ## 문서 우선순위
-1. 실행/운영: `config/README.md`
-2. 설정 구조: `config/EXPLANATION.md`
-3. 컴포넌트별 매핑: `config/COMPONENT-CONFIGS.md`
-4. 리팩토링 이력: `demolish-ops.md`, `merge-issue.md`
+1. 실행/운영 런북: `docs/runtime-runbook.md`
+2. 이번 최적화 변경 이력/검증: `docs/optimization-changelog.md`
+3. 설정 구조: `config/EXPLANATION.md`
+4. 컴포넌트별 매핑: `config/COMPONENT-CONFIGS.md`
 
 ## 실행 원칙
 1. `config/.env`는 IP/PORT만 관리한다.
@@ -37,7 +37,8 @@ Reliable, scalable, fault-tolerant data pipeline simulation project.
 
 ## Quick Start (single-machine)
 ```bash
-cp config/.env.single-machine config/.env
+# config/.env를 로컬에서 생성 (IP/PORT만 포함)
+touch config/.env
 
 docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
 docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
