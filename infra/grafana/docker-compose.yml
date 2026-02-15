@@ -27,11 +27,15 @@ services:
       - CLICKHOUSE_HTTP_PORT=8123
       - MASTER_GEOJSON=/master/taxi_zones.geojson
       - OUTPUT_DIR=/data/geojson
-      - UPDATE_INTERVAL=10
+      - UPDATE_INTERVAL=900
+      - GEOJSON_HTTP_PORT=18081
+      - LOOKBACK_MINUTES=1440
     volumes:
       - ./scripts/update_geojson.py:/app/update_geojson.py:ro
       - ./provisioning/geojson/taxi_zones.geojson:/master/taxi_zones.geojson:ro
       - geojson_data:/data/geojson
+    ports:
+      - "${GEOJSON_HTTP_PORT:-18081}:18081"
     command: python /app/update_geojson.py
     networks:
       - kafka-network

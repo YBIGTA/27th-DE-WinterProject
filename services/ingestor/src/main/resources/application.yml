@@ -9,11 +9,11 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
-        linger.ms: 50              # Match bufferTimeout duration
-        batch.size: 32768          # 32KB batches
+        linger.ms: 5               # Low latency batching
+        batch.size: 131072         # 128KB batches
         compression.type: lz4      # Fast compression
         acks: 1                    # Leader acknowledgment
         retries: 3
         max.in.flight.requests.per.connection: 5
-        buffer.memory: 67108864    # 64MB
-        max.block.ms: 2000         # Match generator timeout
+        buffer.memory: 134217728   # 128MB
+        max.block.ms: 5000
