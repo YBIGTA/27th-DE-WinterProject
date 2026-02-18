@@ -9,4 +9,28 @@ services:
     volumes:
       - ./templates/nginx.distributed.conf.template:/etc/nginx/templates/nginx.conf.template:ro
     command: sh -c "envsubst '$$INGESTOR_1_IP $$INGESTOR_2_IP $$INGESTOR_3_IP $$INGESTOR_1_PORT $$INGESTOR_2_PORT $$INGESTOR_3_PORT' < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
+    networks:
+      - kafka-network
     restart: unless-stopped
+
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: promtail-nginx
+    privileged: true
+    env_file:
+      - ../../config/.env
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    depends_on:
+      - nginx-lb
+    networks:
+      - kafka-network
+
+networks:
+  kafka-network:
+    external: true
+    name: kafka-network

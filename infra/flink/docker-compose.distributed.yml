@@ -27,8 +27,11 @@ services:
       - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
+    networks:
+      - kafka-network
+    restart: unless-stopped
 
-  flink:
+  flink-taskmanager:
     image: flink-taxi-job:latest
     container_name: flink-taskmanager
     command: taskmanager
@@ -55,3 +58,27 @@ services:
       - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: promtail-flink
+    privileged: true
+    env_file:
+      - ../../config/.env
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    depends_on:
+      - flink-jobmanager
+    networks:
+      - kafka-network
+networks:
+  kafka-network:
+    external: true
+    name: kafka-network
