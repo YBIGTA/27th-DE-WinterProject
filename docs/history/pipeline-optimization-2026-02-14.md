@@ -53,7 +53,7 @@
 ### 문서
 - `README.md`
   - 문서 우선순위 섹션을 `docs/` 기준으로 업데이트
-- `docs/runtime-runbook.md`
+- `docs/runbooks/runtime.md`
   - env 추적 정책 반영
   - Geomap 운영값(갱신주기/윈도우/해석) 추가
 
@@ -131,7 +131,7 @@
 | Flink | `infra/flink/docker-compose.yml`, `services/flink-job/pom.xml` | 병렬도/슬롯/JDBC batch 설정, ClickHouse JDBC 의존성 누락 보완 |
 | ClickHouse | `infra/clickhouse/schema.sql` | 파티셔닝/정렬 키 변경 타당성 |
 | Grafana/Map | `infra/grafana/provisioning/dashboards/taxi-events.json`, `infra/grafana/scripts/update_geojson.py`, `infra/grafana/docker-compose.yml` | 패널 제거, 퍼센트 tier, no-cache, 15분 갱신/24시간 윈도우 |
-| Docs | `README.md`, `docs/runtime-runbook.md`, `docs/optimization-changelog.md` | 실행/정리 절차, 운영 파라미터, 검증 수치 정합성 |
+| Docs | `README.md`, `docs/runbooks/runtime.md`, `docs/history/pipeline-optimization-2026-02-14.md` | 실행/정리 절차, 운영 파라미터, 검증 수치 정합성 |
 
 ## 7. 부하 실험 조건/결과 (배속 기준)
 

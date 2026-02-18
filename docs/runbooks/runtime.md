@@ -24,6 +24,20 @@
 docker compose -f <compose-file> --env-file config/.env up
 ```
 
+소스 오브 트루스 매트릭스:
+
+| Layer | File(s) | Contains |
+|---|---|---|
+| Network | `config/.env` | IP/PORT only |
+| Kafka runtime | `infra/kafka/docker-compose*.yml` | Broker topology and Kafka tuning |
+| ClickHouse runtime | `infra/clickhouse/docker-compose*.yml` | Service wiring and schema bootstrap |
+| Ingestor runtime | `services/ingestor/docker-compose*.yml` | `SPRING_*`, `APP_*` |
+| Nginx runtime | `infra/nginx/docker-compose*.yml` | Load balancing config |
+| Flink runtime | `infra/flink/docker-compose*.yml` | `FLINK_*` runtime values |
+| Prometheus runtime | `infra/prometheus/docker-compose*.yml` | Scrape targets, retention |
+| Grafana runtime | `infra/grafana/docker-compose*.yml` | Datasources, dashboards |
+| Generator runtime | `services/generator/config/default.yaml` | Native generator defaults |
+
 ## 3. 사전 준비
 
 ## 3.1 필수 도구
@@ -39,7 +53,7 @@ docker compose -f <compose-file> --env-file config/.env up
 touch config/.env
 ```
 
-`config/.env*` 파일은 git 추적 대상이 아닙니다. (`.gitignore` 정책)
+`config/.env` 파일만 git 추적 대상이 아닙니다. (`.gitignore` 정책)
 
 필수 원칙:
 
@@ -195,6 +209,23 @@ C2=$(docker exec clickhouse clickhouse-client --query "SELECT count() FROM defau
 echo "rate_per_sec=$(( (C2-C1)/5 ))"
 ```
 
+## 4.8 Monitoring Stack (선택)
+
+```bash
+# Prometheus + Kafka Exporter
+docker compose -f infra/prometheus/docker-compose.yml --env-file config/.env up -d
+
+# Grafana
+docker compose -f infra/grafana/docker-compose.yml --env-file config/.env up -d
+```
+
+검증:
+
+```bash
+curl -sf "http://127.0.0.1:${PROMETHEUS_PORT:-9090}/-/healthy"
+curl -sf "http://127.0.0.1:${GRAFANA_PORT:-3000}/api/health"
+```
+
 ## 5. Multi-machine 실행 순서
 
 핵심: `config/.env`는 모든 머신에서 동일한 값이어야 하며, 각 머신은 자기 역할 서비스만 실행합니다.
@@ -341,3 +372,39 @@ docker exec clickhouse clickhouse-client --query "TRUNCATE TABLE default.taxi_ev
 ```
 
 분산 모드는 각 머신에서 해당 compose 파일로 동일하게 `down`을 실행합니다.
+
+## 11. Optional: S3 Sink Branch
+
+1. Provision S3 + IAM in `infra/terraform`:
+
+```bash
+cd infra/terraform
+terraform init
+terraform plan
+terraform apply
+```
+
+2. Prepare connector config:
+
+```bash
+cd ../connectors
+cp s3-sink-config.template.json s3-sink-config.json
+```
+
+3. Fill bucket and AWS keys in `infra/connectors/s3-sink-config.json`.
+4. Start Kafka Connect worker (not included in this repository).
+5. Register connector:
+
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  --data @s3-sink-config.json \
+  http://localhost:8083/connectors
+```
+
+## 12. Common Pitfalls
+
+1. Missing `--env-file config/.env` causes unresolved `${VAR}` or wrong defaults.
+2. `config/.env` with non-network keys breaks source-of-truth policy.
+3. `kafka-network` missing on non-kafka machines breaks ClickHouse/Flink startup.
+4. Flink TaskManager machine without local `flink-taxi-job:latest` image fails to start.
+5. Single-machine Flink compose uses internal Docker DNS (`kafka-*`, `clickhouse`); only distributed mode should use real reachable host IPs in `config/.env`.
