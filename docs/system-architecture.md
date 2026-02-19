@@ -70,7 +70,7 @@ Authoritative detail (ownership matrix, invariants, constraints):
 
 ## 7. Reliability and Failure Handling
 1. Generator: batching, retry, adaptive rate-limiting, circuit breaker, DLQ
-2. Ingestor: reactive buffering and async Kafka publish pipeline
+2. Ingestor: reactive buffering, async Kafka publish pipeline, file-based DLQ for serialization failures
 3. Kafka: broker replication/topology by deployment mode
 4. Flink: streaming job recovery behavior and sink retry considerations
 

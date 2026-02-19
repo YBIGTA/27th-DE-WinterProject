@@ -17,6 +17,7 @@ import reactor.util.retry.Retry;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -33,8 +34,12 @@ public class IngestionService {
     @Value("${app.kafka.topic:taxi-event-data}")
     private String topicName;
 
+    @Value("${app.dlq.filepath:dead_letter_queue.jsonl}")
+    private String dlqFilePath;
+
     private Sinks.Many<TaxiEvent> sink;
     private int bufferSize;
+    private DeadLetterQueue dlq;
 
     // Metrics for structured logging
     private final AtomicLong eventsReceived = new AtomicLong(0);
@@ -54,6 +59,12 @@ public class IngestionService {
 
     @PostConstruct
     public void init() {
+        try {
+            dlq = new DeadLetterQueue(dlqFilePath);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to initialize dead letter queue at " + dlqFilePath, e);
+        }
+
         bufferSize = tuning.getBuffer().getSize();
         int batchSize = tuning.getBatch().getSize();
         long batchTimeoutMs = tuning.getBatch().getTimeoutMs();
@@ -120,8 +131,9 @@ public class IngestionService {
                 } catch (Exception e) {
                     log.error("[SERIALIZATION] Failed to serialize event: trip_id={}",
                               event.getTripId(), e);
+                    dlq.write(event, e);
                     eventsFailed.incrementAndGet();
-                    return Mono.empty();  // Skip this event
+                    return Mono.empty();  // Skip for Kafka, but persisted in DLQ
                 }
             });
 
@@ -225,9 +237,10 @@ public class IngestionService {
 
         log.info("[METRICS] events_received={}, events_processed={}, events_failed={}, " +
                  "events_dropped={}, batches_sent={}, buffer_usage={}%, " +
-                 "success_rate={}",
+                 "dlq_written={}, success_rate={}",
                  received, processed, failed, dropped, batches,
                  getBufferUsagePercent(),
+                 dlq != null ? dlq.getTotalWritten() : 0,
                  received > 0 ? String.format("%.2f%%", (processed * 100.0 / received)) : "N/A");
     }
 
@@ -247,6 +260,11 @@ public class IngestionService {
 
         // Close Kafka sender
         kafkaSender.close();
+
+        // Close DLQ file
+        if (dlq != null) {
+            dlq.close();
+        }
 
         logMetrics();
         log.info("[SHUTDOWN] Ingestion service shut down gracefully");

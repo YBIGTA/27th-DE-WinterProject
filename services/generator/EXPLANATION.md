@@ -1,7 +1,7 @@
 ---
 component: Generator (Traffic Simulator)
 status: CURRENT
-last_reviewed: 2026-02-02 (Updated: Batching implementation)
+last_reviewed: 2026-02-18 (Code-aligned review)
 core_files:
   - services/generator/generate.cpp
   - services/generator/config/default.yaml
@@ -16,10 +16,10 @@ Replays historical NYC taxi trip data from Parquet files as real-time event stre
 
 ## I/O Flow
 ```
-[Parquet Files] --(Apache Arrow)--> [Generator] --(HTTP POST/JSON Batches)--> [Ingestor Cluster]
-    ↓                                      ↓                                      ↓
-taxi_data_preprocessed/           Priority Queue                    localhost:8080/ingest/batch
-2020-01.parquet                   + Event Scheduler                 (Nginx LB)
+[Parquet Files] --(Apache Arrow)--> [Generator] --(HTTP POST/JSON Batches)--> [Nginx LB] --> [Ingestor Cluster]
+    ↓                                      ↓                                       ↓            ↓
+taxi_data_preprocessed/           Priority Queue                     localhost:8080             /ingest/batch upstream
+2020-01.parquet                   + Event Scheduler                  (/ingest, /ingest/batch)  fan-out to ingestor replicas
 2020-02.parquet                   + Batching Layer (200 events)
                                   + Resilience Layer
 ```
@@ -44,7 +44,8 @@ flowchart TD
     J -->|No| K[Requeue All]
     J -->|Yes| L{Rate Limit Delay}
     L --> M[http_post_json_batch]
-    M --> N{Status Code}
+    M --> M1[Nginx LB (/ingest/batch)]
+    M1 --> N{Status Code}
     N -->|2xx| O[Success]
     N -->|400| P[Split & Retry Individual]
     N -->|429/5xx/0| Q{Can Retry?}
@@ -59,7 +60,9 @@ flowchart TD
 ### Concurrency Model
 - **Thread Model:** Multi-threaded producer-consumer with per-thread batching
   - 1 Scheduler Thread (producer) → pushes to payload queue
-  - N Sender Threads (consumers, N = hardware_concurrency * 2) → batch accumulation and HTTP requests
+  - N Sender Threads (consumers)
+    - If `ingestion_url` is valid: `N = hardware_concurrency * 2`
+    - If `ingestion_url` is invalid (stdout fallback): `N = 1`
   - 1 Metrics Thread → periodic logging (every 10s)
 
 - **Shared State:**
@@ -75,7 +78,8 @@ flowchart TD
   - `std::mutex` + `std::condition_variable` (BoundedQueue)
   - `std::atomic<T>` (metrics, state machine, sliding windows, batch counters)
   - `compare_exchange_strong` (rate limiter delay, circuit breaker state transitions, max wait time)
-  - `thread_local` (HttpConnection, ConnectionHealth, BatchAccumulator per sender thread)
+  - `thread_local` (HttpConnection, ConnectionHealth)
+  - Per-thread local `BatchAccumulator` (sender thread lambda-local object)
 
 ### Core Algorithm
 
@@ -116,7 +120,7 @@ while (!event_queue.empty()) {
 
 #### 2. Batching Layer (Sender Threads)
 ```cpp
-// Thread-local batch accumulator (per sender thread)
+// Per-thread local batch accumulator
 BatchAccumulator accumulator(batch_size=200, timeout=100ms)
 
 while (true) {
@@ -125,17 +129,22 @@ while (true) {
         batch = accumulator.take_batch()
         wait_time_us = accumulator.get_wait_time_us()
         post_batch_payload(batch, ...)
-        batch_metrics.record_batch(batch.size(), wait_time_us)
     }
 
-    // Pop event from queue
+    // Pop event from queue (blocking)
     got_event = payload_queue.pop(item)
     if (!got_event) {
-        // Queue closed - flush remaining batch
+        // payload_queue closed - flush remaining batch
         if (!accumulator.empty()) {
             post_batch_payload(accumulator.take_batch(), ...)
         }
-        break
+
+        // Drain requeue; retries bypass batching
+        if (requeue.pop(item)) {
+            post_payload(item, ...)
+            continue
+        }
+        break  // both queues closed
     }
 
     // Add to batch
@@ -150,10 +159,11 @@ while (true) {
 
 **Batching Strategy:**
 - **Size threshold:** Flush when batch reaches 200 events (configurable)
-- **Time threshold:** Flush when 100ms elapsed since first event (configurable)
+- **Time threshold:** Flush when 100ms elapsed since first event (configurable, best-effort)
 - **Per-thread:** Each sender thread has its own accumulator (no cross-thread synchronization)
 - **Requeue bypass:** Failed events bypass batching on retry (already delayed once)
-- **Wait time tracking:** Tracks how long each event waited in batch for monitoring
+- **Queue interaction:** Timeout check happens before blocking `payload_queue.pop`; under low traffic flush can wait until next item or queue close
+- **Wait time tracking:** Intended to track batch wait, but currently under-reported due to measurement order (`take_batch()` before `get_wait_time_us()`)
 
 **Batch Error Handling:**
 - **400 (Bad Request):** Split batch and retry each event individually to isolate bad event
@@ -182,8 +192,8 @@ status_code = http_post_json(endpoint, payload, max_failures)
 rate_limiter.record_response(status_code)
 circuit_breaker.record_result(status_code)
 
-if (status_code == 429 || 5xx || 0) {
-    if (retry_count < 3) requeue.push(++item)
+if (status_code == 429 || status_code >= 500 || status_code == 0) {
+    if (retry_count < PayloadWithRetry::MAX_RETRIES /* fixed 3 */) requeue.push(++item)
     else dlq.write(item)
 } else if (4xx except 429) {
     drop(item)  // Client error
@@ -230,7 +240,7 @@ on record_result(status_code):
             transition(HALF_OPEN → OPEN)
         }
     } else if (state == CLOSED) {
-        if (should_trip()) {  // failure_rate > 50% AND count >= 20
+        if (should_trip()) {  // failure_rate >= threshold AND count >= min_requests
             transition(CLOSED → OPEN)
         }
     }
@@ -250,10 +260,10 @@ on allow_request():
 ```
 
 **Decision Logic:**
-- Trip when: failure rate > 50% AND requests >= 20 (avoid false positives)
-- Only 500/503/0 trigger circuit (429 does NOT)
+- Trip when: failure rate >= threshold (default 50%) AND requests >= min_requests (default 20)
+- Failure for breaker: `status_code == 0 || status_code >= 500` (429 does NOT trip breaker)
 - OPEN timeout: 30 seconds before testing
-- HALF_OPEN: allow 5 test requests, need 3 successes to close
+- HALF_OPEN: allow up to 5 test requests, need 3 successes to close, any failure re-opens
 
 #### 6. Connection Management
 ```cpp
@@ -284,7 +294,7 @@ on post_json(payload):
     }
 
 // In http_post_json
-if (health.consecutive_failures >= 3) {
+if (health.should_reset()) {
     conn.reset()
     health.record_reset()
 }
@@ -335,8 +345,7 @@ Sends JSON array of 1-200 events to `/ingest/batch`:
 ```
 
 **Response Codes:**
-- **202 Accepted:** All events in batch successfully queued
-- **207 Multi-Status:** Partial success (some events failed)
+- **2xx (including 202/207):** Treated as success by generator
 - **400 Bad Request:** Empty batch or malformed JSON → splits and retries individually
 - **429 Too Many Requests:** Buffer overflow → requeues entire batch
 - **500 Internal Server Error:** Service failure → requeues entire batch
@@ -425,6 +434,10 @@ Sends JSON array of 1-200 events to `/ingest/batch`:
 
 ## Configuration Parameters
 
+Notes:
+- Defaults in this table are **code defaults** (`SimulationConfig`).
+- Running with `config/default.yaml` overrides some values (notably `playback.speed: 300`).
+
 | Parameter | Default | Range | Impact |
 |-----------|---------|-------|--------|
 | `playback_speed` | 100.0 | 1.0 - 10000.0 | Higher = faster simulation, lower timing accuracy |
@@ -434,7 +447,7 @@ Sends JSON array of 1-200 events to `/ingest/batch`:
 | `circuit_breaker_min_requests` | 20 | 5 - 100 | Higher = fewer false positives |
 | `circuit_breaker_timeout_sec` | 30 | 5 - 300 | Time in OPEN before testing recovery |
 | `connection_max_failures` | 3 | 1 - 10 | Lower = more aggressive connection resets |
-| `max_retries` | 3 | 0 - 10 | Higher = more resilient, slower to give up |
+| `max_retries` | 3 | 0 - 10 | Parsed and stored, but retry loop currently uses fixed `PayloadWithRetry::MAX_RETRIES=3` |
 | `dlq_filepath` | dead_letter_queue.jsonl | - | Where failed events are written |
 | `batch_size` | 200 | 1 - 1000 | Higher = better throughput, more latency; 1 = disable batching |
 | `batch_timeout_ms` | 100 | 10 - 5000 | Higher = better batching efficiency, more latency |
@@ -468,14 +481,14 @@ Sends JSON array of 1-200 events to `/ingest/batch`:
 
 ### Console Logs (every 10 seconds)
 ```
-[METRICS] rate_limit_delay=150ms, 429_rate=15.00%, circuit_state=CLOSED, total_429s=125, dlq_writes=0, batches_sent=750, avg_batch_size=200.0, avg_wait_ms=52, max_wait_ms=100
+[METRICS] rate_limit_delay=150ms, 429_rate=15.00%, circuit_state=CLOSED, total_429s=125, dlq_writes=0, batches_sent=750, avg_batch_size=200.0, avg_wait_ms=0, max_wait_ms=0
 ```
 
 **New Batch Metrics:**
 - `batches_sent`: Total number of batches sent to `/ingest/batch`
 - `avg_batch_size`: Average events per batch (target: ~200)
-- `avg_wait_ms`: Average time events wait in batch before sending (target: ~50ms)
-- `max_wait_ms`: Maximum wait time observed (should stay near 100ms timeout)
+- `avg_wait_ms`: Average batch wait time (currently under-reported because measurement is taken after `take_batch()`)
+- `max_wait_ms`: Maximum batch wait time (same caveat as above)
 
 ### State Transition Logs
 ```
@@ -499,8 +512,8 @@ Sends JSON array of 1-200 events to `/ingest/batch`:
 >>> DLQ writes: 0
 >>> Batches sent: 750
 >>> Avg batch size: 200.0
->>> Avg wait time: 52ms
->>> Max wait time: 100ms
+>>> Avg wait time: 0ms
+>>> Max wait time: 0ms
 ```
 
 ## Testing Strategy
@@ -537,13 +550,18 @@ cat dead_letter_queue.jsonl | wc -l  # Count failed events
 ### Load Tests
 ```bash
 # High-speed test
-playback_speed=10000 ./build/generate
+./build/generate config/highspeed.yaml
+# config/highspeed.yaml example:
+# playback:
+#   speed: 10000
 # Expected: Throughput plateaus at ~60k/sec (limited by HTTP latency)
 
 # Long-duration test
-start_date=2020-01
-end_date=2024-04
-./build/generate
+./build/generate config/long-range.yaml
+# config/long-range.yaml example:
+# date_range:
+#   start: "2020-01"
+#   end: "2024-04"
 # Expected: Runs for hours, memory stable at ~2-3GB
 ```
 
@@ -569,6 +587,18 @@ end_date=2024-04
 
 7. **No event deduplication:** Parquet files may have duplicates
    - Future: Hash-based dedup on trip_id
+
+8. **`max_retries` config is not wired into retry decisions**
+   - Current behavior uses fixed `PayloadWithRetry::MAX_RETRIES = 3`
+   - Future: Replace fixed constant checks with `SimulationConfig.max_retries`
+
+9. **Batch wait metrics can show near-zero**
+   - Root cause: wait time sampled after batch state reset
+   - Future: sample wait time before `take_batch()` or store first-event timestamp externally
+
+10. **Timeout flush is best-effort under low traffic**
+   - Root cause: sender loop uses blocking `payload_queue.pop()`
+   - Future: timed pop (`try_pop_for`) or wake-up tick for timeout-driven flush
 
 ## Dependencies
 

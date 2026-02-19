@@ -1,6 +1,10 @@
 server:
   port: 8080
 
+app:
+  dlq:
+    filepath: dead_letter_queue.jsonl
+
 spring:
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
