@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 
 @Slf4j
 @Service
@@ -48,14 +49,10 @@ public class IngestionService {
     private final AtomicLong eventsDropped = new AtomicLong(0);
     private final AtomicLong batchesSent = new AtomicLong(0);
 
-    // Custom emit failure handler for thread-safe emission
-    private final Sinks.EmitFailureHandler emitFailureHandler = (signalType, emitResult) -> {
-        if (emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
-            // Busy-loop retry for concurrent access - this is expected under high load
-            return true;  // retry
-        }
-        return false;  // don't retry for other failures (OVERFLOW, CANCELLED, etc.)
-    };
+    // Bounded retry policy for FAIL_NON_SERIALIZED to avoid CPU spin under contention.
+    private static final int EMIT_RETRY_LIMIT = 10;
+    private static final long EMIT_RETRY_INITIAL_BACKOFF_NS = 50_000L; // 50us
+    private static final long EMIT_RETRY_MAX_BACKOFF_NS = 2_000_000L;  // 2ms
 
     @PostConstruct
     public void init() {
@@ -176,12 +173,14 @@ public class IngestionService {
     public Sinks.EmitResult ingest(TaxiEvent event) {
         eventsReceived.incrementAndGet();
 
-        // FAIL_NON_SERIALIZED (concurrent access) 발생 시 짧은 루프 내에서 재시도
+        // Bounded retries with tiny backoff for concurrent sink emission.
         Sinks.EmitResult result = sink.tryEmitNext(event);
         int retryCount = 0;
-        
-        while (result == Sinks.EmitResult.FAIL_NON_SERIALIZED && retryCount < 10) {
-            Thread.onSpinWait(); // Busy-spin hint
+        long backoffNs = EMIT_RETRY_INITIAL_BACKOFF_NS;
+
+        while (result == Sinks.EmitResult.FAIL_NON_SERIALIZED && retryCount < EMIT_RETRY_LIMIT) {
+            LockSupport.parkNanos(backoffNs);
+            backoffNs = Math.min(backoffNs * 2, EMIT_RETRY_MAX_BACKOFF_NS);
             result = sink.tryEmitNext(event);
             retryCount++;
         }
@@ -193,6 +192,9 @@ public class IngestionService {
         } else if (result != Sinks.EmitResult.OK) {
             log.error("[EMIT_ERROR] Failed to emit event: result={}, trip_id={}",
                       result, event.getTripId());
+        } else if (retryCount > 0) {
+            log.debug("[EMIT_RETRY] Succeeded after {} retries: trip_id={}",
+                      retryCount, event.getTripId());
         }
 
         return result;

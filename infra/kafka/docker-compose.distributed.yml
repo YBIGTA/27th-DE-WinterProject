@@ -131,6 +131,9 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    depends_on:
+      kafka-1:
+        condition: service_healthy
     env_file:
       - ../../config/.env
     ports:

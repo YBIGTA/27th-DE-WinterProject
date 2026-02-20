@@ -1,5 +1,5 @@
 events {
-    worker_connections 1024;
+    worker_connections 4096;
 }
 
 http {
@@ -38,6 +38,11 @@ http {
             proxy_buffers 16 8k;
             proxy_busy_buffers_size 16k;
 
+        }
+
+        location /health {
+            return 200 'OK';
+            add_header Content-Type text/plain;
         }
     }
 }

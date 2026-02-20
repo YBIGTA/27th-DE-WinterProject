@@ -12,12 +12,3 @@ spring:
       # 객체 -> JSON 문자열 변환 직렬화
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      properties:
-        linger.ms: 5               # Low latency batching
-        batch.size: 131072         # 128KB batches
-        compression.type: lz4      # Fast compression
-        acks: 1                    # Leader acknowledgment
-        retries: 3
-        max.in.flight.requests.per.connection: 5
-        buffer.memory: 134217728   # 128MB
-        max.block.ms: 5000
