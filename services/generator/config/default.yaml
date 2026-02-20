@@ -6,9 +6,9 @@ date_range:
   end: "2024-12"
 
 playback:
-  speed: 300
+  speed: 50
 
-ingestion_url: "http://localhost:8080/ingest"
+ingestion_url: "http://localhost:8080/ingest/batch"
 
 debug_timing: false
 

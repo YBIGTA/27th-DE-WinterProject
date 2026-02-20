@@ -1,0 +1,20 @@
+apiVersion: 1
+
+datasources:
+  - name: ClickHouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    isDefault: true
+    jsonData:
+      host: ${CLICKHOUSE_IP}
+      port: ${CLICKHOUSE_NATIVE_PORT}
+      protocol: native
+      defaultDatabase: default
+    editable: true
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://${LOKI_IP}:${PROMETHEUS_PORT}
+    isDefault: false
+    editable: true
