@@ -55,10 +55,22 @@
   - 정상: `eventsProcessed` 증가
 - `Retry.backoff(3, 100ms).maxBackoff(2s)`는 `send()` 스트림 에러 시 배치 재시도에 적용됩니다.
 
+### 5-1. 어느 브로커로 보내는지는 누가 결정하는가?
+- Ingestor 코드가 직접 `broker-1`, `broker-2`를 골라 보내는 방식은 아닙니다.
+- Ingestor가 하는 일:
+  - 토픽 지정 (`topicName`)
+  - key 지정 (`tripId` -> String)
+  - `kafkaSender.send()` 호출
+- 이후 라우팅은 Kafka Producer 클라이언트(ingestor 프로세스 내부 라이브러리)가 처리합니다.
+  1. bootstrap 서버 중 한 곳에 접속해 메타데이터를 조회
+  2. key 기반으로 partition 결정(커스텀 partitioner를 따로 구현하지 않음)
+  3. 해당 partition의 leader broker로만 전송
+- 즉, "모든 브로커에 동시에 전송"이 아니라 "대상 partition leader로 전송"이 정확한 동작입니다.
+
 ## 6. Reactor Kafka 설정 특성
 - `ReactorKafkaConfig`에서 Producer 옵션을 코드로 직접 설정합니다.
 - 주요 값:
-  - `acks=1`
+  - `acks=1` (leader ack만 기다림)
   - `compression.type=lz4`
   - `retries=3`
   - `max.in.flight.requests.per.connection=5`
@@ -89,7 +101,8 @@
 7. Kafka 레코드 변환  
    각 이벤트를 `ProducerRecord(topic, key=tripId, value=json)`로 변환합니다.
 8. Kafka 비동기 전송  
-   `kafkaSender.send()`로 배치 스트림을 전송합니다.
+   `kafkaSender.send()` 호출 후 producer 내부에서
+   `bootstrap 메타데이터 조회 -> key 기반 partition 결정 -> leader broker 전송` 순서로 처리합니다.
 9. 전송 결과 반영  
    레코드 단위 성공/실패 카운터를 갱신합니다.
 10. 스트림 오류 재시도  
@@ -108,9 +121,10 @@
 | 4 | Sink buffer | `TaxiEvent` stream | `asFlux().bufferTimeout(...)` |
 | 5 | Batch builder | `List<TaxiEvent>` | `sendBatchToKafkaReactive()` |
 | 6 | Kafka sender input | `SenderRecord<String,String,Integer>` | `kafkaSender.send()` |
-| 7 | Kafka broker | topic record(key=`tripId`) | partition append |
-| 8 | DLQ 파일 | JSONL (직렬화 실패 이벤트) | 사후 분석/재처리 |
-| 9 | Metrics counters | `AtomicLong` 누적값 | 주기 로그 출력 |
+| 7 | Producer client (Ingestor 내부) | metadata + key 기반 partition 계산 | partition leader broker |
+| 8 | Kafka broker | topic record(key=`tripId`) | partition append |
+| 9 | DLQ 파일 | JSONL (직렬화 실패 이벤트) | 사후 분석/재처리 |
+| 10 | Metrics counters | `AtomicLong` 누적값 | 주기 로그 출력 |
 
 ## 10. Ingestor가 실제로 관리하는 것
 1. 수신-전송 분리  
@@ -137,6 +151,9 @@ flowchart TD
     K[sendBatchToKafkaReactive]
     R[SenderRecord key=tripId value=json]
     KS[KafkaSender.send]
+    META[Bootstrap broker metadata lookup]
+    PART[Partition select by key(tripId)]
+    LEAD[Send to target partition leader]
     KR{SenderResult.exception?}
     KP[(Kafka topic taxi-event-data)]
     RETRY[Retry.backoff + pipeline retry]
@@ -148,7 +165,8 @@ flowchart TD
     E -->|FAIL_NON_SERIALIZED| I
     E -->|FAIL_OVERFLOW| C
 
-    S --> B --> K --> R --> KS --> KR
+    S --> B --> K --> R --> KS --> META --> PART --> LEAD
+    LEAD -->|acks=1 leader ack result| KR
     KR -->|No| KP
     KR -->|Yes| M
     KS -->|stream error| RETRY --> KS
@@ -163,3 +181,5 @@ flowchart TD
 - `/ingest`의 `202`는 Kafka 저장 완료가 아니라 “내부 Sink 적재 성공” 의미입니다.
 - `SenderResult.exception()`은 레코드 실패 처리이며, `Retry.backoff`는 스트림 오류 시 배치 레벨로 동작합니다.
 - `tripId`가 `null`이면 key는 `"null"` 문자열이 됩니다(ingestor에서 non-null 검증하지 않음).
+- Ingestor가 "브로커를 수동 선택"하지는 않으며, producer 라이브러리가 `metadata -> partition -> leader` 라우팅을 수행합니다.
+- 현재 `acks=1`이라 leader ack만 성공 조건으로 보며, follower ack를 기다리는 설정은 아닙니다.
