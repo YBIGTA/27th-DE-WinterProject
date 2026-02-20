@@ -6,6 +6,7 @@
 - Schema: `infra/clickhouse/schema.sql`
 
 ClickHouse runtime 값은 compose에 하드코딩되어 있고, schema는 mount로 초기화된다.
+현재 기본 스키마에는 이벤트 원본 테이블(`taxi_events`)과 예측 결과 테이블(`taxi_predictions`)이 포함되어 있다.
 
 ## 실행 전 준비
 ```bash
@@ -27,6 +28,20 @@ docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file con
 ```bash
 curl -s http://localhost:8123/ping
 # expected: Ok
+```
+
+## 테이블 확인
+```bash
+docker exec -i clickhouse clickhouse-client --query "SHOW TABLES FROM default"
+docker exec -i clickhouse clickhouse-client --query "DESCRIBE TABLE default.taxi_events"
+docker exec -i clickhouse clickhouse-client --query "DESCRIBE TABLE default.taxi_predictions"
+```
+
+## 적재 확인 예시
+```bash
+docker exec -i clickhouse clickhouse-client --query "SELECT count(*) FROM default.taxi_events"
+docker exec -i clickhouse clickhouse-client --query "SELECT count(*) FROM default.taxi_predictions"
+docker exec -i clickhouse clickhouse-client --query "SELECT prediction_time,target_time,zone_id,predicted_demand,model_version FROM default.taxi_predictions ORDER BY prediction_time DESC LIMIT 20"
 ```
 
 ## 포트

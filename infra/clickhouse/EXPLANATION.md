@@ -1,7 +1,7 @@
 ---
 component: clickhouse-docker-compose
 status: CURRENT
-last_reviewed: 2026-02-04
+last_reviewed: 2026-02-20
 core_files:
   - infra/clickhouse/docker-compose.yml
   - infra/clickhouse/docker-compose.distributed.yml
@@ -23,6 +23,9 @@ core_files:
 2. HTTP(8123), Native TCP(9000) 포트 바인딩
 3. `clickhouse_data` 볼륨으로 데이터 영속화
 4. `schema.sql`을 `/docker-entrypoint-initdb.d/schema.sql`에 마운트해 초기 스키마 적용
+5. 기본 테이블 생성:
+   - `default.taxi_events` (원본 이벤트 적재)
+   - `default.taxi_predictions` (Flink ONNX 예측 결과 적재)
 5. `/ping` 헬스체크로 생존 확인
 
 참고:
@@ -44,3 +47,4 @@ core_files:
 | 볼륨 권한/손상 | 컨테이너 로그 오류 | 볼륨 권한 확인 또는 재생성 |
 | 헬스체크 실패 | `unhealthy` 상태 | 로그 확인 후 재시작/리소스 점검 |
 | 초기 스키마 미적용 | 테이블 없음/로그 | `schema.sql` 경로/내용 확인 |
+| 예측 테이블 적재 없음 | `taxi_events` 증가 대비 `taxi_predictions=0` | Flink prediction sink 설정/ONNX 로드/lag 상태 누적 여부 점검 |
