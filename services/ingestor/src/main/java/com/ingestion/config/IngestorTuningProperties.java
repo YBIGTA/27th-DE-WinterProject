@@ -14,13 +14,13 @@ public class IngestorTuningProperties {
 
     @Data
     public static class Buffer {
-        private int size = 10000;
+        private int size = 30000;
     }
 
     @Data
     public static class Batch {
         private int size = 500;
-        private long timeoutMs = 50;
+        private long timeoutMs = 10;
     }
 
     @Data

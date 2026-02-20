@@ -10,13 +10,16 @@ import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
 import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
 import org.apache.flink.connector.jdbc.JdbcSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
@@ -45,6 +48,19 @@ public class TaxiRealtimeJob {
 
         // ✅ 기본 parallelism=6 (env에 FLINK_PARALLELISM 있으면 덮어씀)
         env.setParallelism(jobConfig.parallelism);
+
+        // ✅ Checkpointing (권장 기본값)
+        env.enableCheckpointing(30_000, CheckpointingMode.EXACTLY_ONCE); // 30초
+
+        CheckpointConfig ck = env.getCheckpointConfig();
+        ck.setCheckpointTimeout(120_000);           
+        ck.setMinPauseBetweenCheckpoints(10_000);     
+        ck.setMaxConcurrentCheckpoints(1);             
+        ck.setTolerableCheckpointFailureNumber(3); 
+        ck.enableUnalignedCheckpoints();             
+        ck.setExternalizedCheckpointCleanup(
+                CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION
+        );
 
         String bootstrap = System.getenv("FLINK_KAFKA_BOOTSTRAP_SERVERS");
         if (bootstrap == null || bootstrap.isBlank()) {
@@ -88,8 +104,7 @@ public class TaxiRealtimeJob {
         // 2) 워터마크 전략 (event.ts 기반)
         WatermarkStrategy<TaxiEvent> watermarkStrategy = WatermarkStrategy
                 .<TaxiEvent>forBoundedOutOfOrderness(Duration.ofSeconds(jobConfig.watermarkOutOfOrdernessSec))
-                .withTimestampAssigner((event, timestamp) -> parseTsOrMin(event))
-                .withIdleness(Duration.ofSeconds(30));
+                .withTimestampAssigner((event, timestamp) -> parseTsOrMin(event));
 
         KafkaSource<TaxiEvent> source = KafkaSource.<TaxiEvent>builder()
                 .setBootstrapServers(bootstrap)
@@ -119,9 +134,9 @@ public class TaxiRealtimeJob {
                 ));
 
         // 늦은 이벤트 모니터링
-        orderedPerTrip.getSideOutput(LATE_EVENTS)
-                .map(e -> "[LATE_DROP] trip_id=" + e.trip_id + " ts=" + e.ts + " event=" + e.event)
-                .print();
+        // orderedPerTrip.getSideOutput(LATE_EVENTS)
+        //         .map(e -> "[LATE_DROP] trip_id=" + e.trip_id + " ts=" + e.ts + " event=" + e.event)
+        //         .print();
 
         // 5) 베이스 스트림 (가공)
         DataStream<TaxiEvent> baseStream = orderedPerTrip
@@ -141,13 +156,14 @@ public class TaxiRealtimeJob {
                     JdbcExecutionOptions.builder()
                             .withBatchSize(jobConfig.jdbcBatchSize)
                             .withBatchIntervalMs(jobConfig.jdbcBatchIntervalMs)
-                            .withMaxRetries(5) 
+                            .withMaxRetries(5)
                             .build(),
                     new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
                             .withUrl(chUrl)
                             .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
                             .build()
-            ));
+            ))
+            .setParallelism(3);
         } else {
             System.out.println("[WARN] ClickHouse sink disabled by FLINK_ENABLE_CLICKHOUSE_SINK=false");
         }
@@ -185,7 +201,7 @@ public class TaxiRealtimeJob {
         }
 
         @Override
-        public void open(org.apache.flink.configuration.Configuration parameters) {
+        public void open(Configuration parameters) {
             bufferState = getRuntimeContext().getListState(
                     new ListStateDescriptor<>("reorder-buffer", TaxiEvent.class)
             );
@@ -300,12 +316,12 @@ public class TaxiRealtimeJob {
     // ---------------------------
     private static class JobConfig {
         // ✅ 고정 기본값
-        int parallelism = 6;
+        int parallelism = 12;
         int watermarkOutOfOrdernessSec = 5;
         int idleCleanupMinutes = 20;
 
-        int jdbcBatchSize = 5000;
-        int jdbcBatchIntervalMs = 1000;
+        int jdbcBatchSize = 50000;
+        int jdbcBatchIntervalMs = 3000;
 
         String kafkaTopic = "taxi-event-data";
         String kafkaGroupId = "taxi-realtime-flink";

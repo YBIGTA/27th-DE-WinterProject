@@ -37,11 +37,11 @@ Optional branches:
 2. `prometheus + kafka-exporter + grafana`
 
 ## Documentation priority
-1. Full runbook (single-machine + distributed): `config/README.md`
-2. Validation checklist: `config/VALIDATION.md`
-3. Config model and invariants: `config/EXPLANATION.md`
-4. Component runtime ownership matrix: `config/COMPONENT-CONFIGS.md`
-5. Refactor history: `demolish-ops.md`, `merge-issue.md`
+1. Full runbook (single-machine + distributed): `docs/runbooks/runtime.md`
+2. Validation checklist: `docs/runbooks/validation.md`
+3. Total architecture overview: `docs/system-architecture.md`
+4. Config model + runtime ownership invariants: `config/EXPLANATION.md`
+5. Refactor history: `docs/history/demolish-ops.md`, `docs/history/merge-issues-2026-02-04.md`
 
 ## Operating principles
 1. `config/.env`는 IP/PORT만 관리한다.
@@ -65,7 +65,7 @@ cd services/generator
 ./build/generate
 ```
 
-Distributed commands and machine-by-machine startup order are in `config/README.md`.
+Distributed commands and machine-by-machine startup order are in `docs/runbooks/runtime.md`.
 
 ## Environment
 1. flink-job: build with JDK 17+, target bytecode Java 11 (Flink 1.17.2 compatibility)

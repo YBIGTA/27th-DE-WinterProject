@@ -4,14 +4,14 @@ created: 2026-02-04
 last_updated: 2026-02-04
 purpose: phase-2-config-consolidation-history
 superseded_by:
-  - demolish-ops.md
-  - config/README.md
+  - docs/history/demolish-ops.md
+  - docs/runbooks/runtime.md
 ---
 
 # Config Upgrade Plan (Historical)
 
 이 문서는 Phase 2(컴포넌트 YAML 중심 모델) 완료 기록이다.
-현재 운영 기준은 Demolish Ops 이후 문서(`config/README.md`)를 따른다.
+현재 운영 기준은 Demolish Ops 이후 문서(`docs/runbooks/runtime.md`)를 따른다.
 
 ## 참고
 - Phase 2에서는 runtime YAML 기반 구조를 도입했지만,
