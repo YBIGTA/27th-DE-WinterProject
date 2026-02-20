@@ -7,3 +7,4 @@ jupyterlab
 matplotlib
 pyarrow
 pandas
+onnxruntime
