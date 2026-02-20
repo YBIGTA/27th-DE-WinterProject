@@ -10,11 +10,11 @@ http {
     access_log /var/log/nginx/access.log upstream_log;
 
     upstream ingestors {
-        least_conn;
-        server ${INGESTOR_1_IP}:${INGESTOR_1_PORT} max_fails=3 fail_timeout=30s;
-        server ${INGESTOR_2_IP}:${INGESTOR_2_PORT} max_fails=3 fail_timeout=30s;
-        server ${INGESTOR_3_IP}:${INGESTOR_3_PORT} max_fails=3 fail_timeout=30s;
-        keepalive 32;
+        random two least_conn;
+        server ${INGESTOR_1_IP}:${INGESTOR_1_PORT};
+        server ${INGESTOR_2_IP}:${INGESTOR_2_PORT};
+        server ${INGESTOR_3_IP}:${INGESTOR_3_PORT};
+        keepalive 64;
     }
 
     server {
@@ -37,6 +37,7 @@ http {
             proxy_buffer_size 8k;
             proxy_buffers 16 8k;
             proxy_busy_buffers_size 16k;
+
         }
     }
 }

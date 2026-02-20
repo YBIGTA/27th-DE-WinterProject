@@ -172,32 +172,27 @@ public class IngestionService {
 
     /**
      * Ingest a single event. Returns emission result for controller to check.
-     * Uses emitNext with failure handler to handle FAIL_NON_SERIALIZED (concurrent access).
      */
     public Sinks.EmitResult ingest(TaxiEvent event) {
         eventsReceived.incrementAndGet();
 
-        // First try with tryEmitNext to get the result
+        // FAIL_NON_SERIALIZED (concurrent access) 발생 시 짧은 루프 내에서 재시도
         Sinks.EmitResult result = sink.tryEmitNext(event);
-
-        if (result == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
-            // Concurrent access detected - use emitNext with retry handler
-            try {
-                sink.emitNext(event, emitFailureHandler);
-                return Sinks.EmitResult.OK;
-            } catch (Exception e) {
-                // emitNext failed even after retries
-                eventsDropped.incrementAndGet();
-                log.warn("[EMIT] Failed to emit after retries: trip_id={}, error={}",
-                         event.getTripId(), e.getMessage());
-                return Sinks.EmitResult.FAIL_OVERFLOW;
-            }
+        int retryCount = 0;
+        
+        while (result == Sinks.EmitResult.FAIL_NON_SERIALIZED && retryCount < 10) {
+            Thread.onSpinWait(); // Busy-spin hint
+            result = sink.tryEmitNext(event);
+            retryCount++;
         }
 
         if (result == Sinks.EmitResult.FAIL_OVERFLOW) {
             eventsDropped.incrementAndGet();
             log.warn("[BACKPRESSURE] Buffer full, event dropped: trip_id={}, buffer_usage=100%",
                      event.getTripId());
+        } else if (result != Sinks.EmitResult.OK) {
+            log.error("[EMIT_ERROR] Failed to emit event: result={}, trip_id={}",
+                      result, event.getTripId());
         }
 
         return result;

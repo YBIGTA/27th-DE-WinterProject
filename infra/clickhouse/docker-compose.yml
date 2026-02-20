@@ -17,6 +17,9 @@ services:
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - ./config.xml:/etc/clickhouse-server/config.d/zz-custom.xml:ro
+      - ./users.xml:/etc/clickhouse-server/users.d/zz-custom-users.xml:ro
+      
     networks:
       - kafka-network
     healthcheck:

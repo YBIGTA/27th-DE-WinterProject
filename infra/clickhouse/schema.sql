@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS default.taxi_events
     `event` String
 )
 ENGINE = MergeTree
-PARTITION BY toYYYYMM(ts)
+PARTITION BY toYYYYMMDD(ts)
 ORDER BY (ts, zone_id, trip_id);
 
 CREATE TABLE IF NOT EXISTS default.taxi_zones
