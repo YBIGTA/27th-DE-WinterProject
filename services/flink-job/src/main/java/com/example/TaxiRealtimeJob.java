@@ -87,14 +87,16 @@ public class TaxiRealtimeJob {
                 "INSERT INTO " + clickhouseTable + " (trip_id, ts, zone_id, event) VALUES (?, ?, ?, ?)";
 
         System.out.printf(
-                "[CONFIG] parallelism=%d, topic=%s, groupId=%s, bootstrap=%s, clickhouseUrl=%s, sinkEnabled=%s, outOfOrder=%ss, idleCleanup=%smin%n",
+                "[CONFIG] parallelism=%d, sinkParallelism=%d, topic=%s, groupId=%s, bootstrap=%s, clickhouseUrl=%s, sinkEnabled=%s, outOfOrder=%ss, watermarkIdleness=%ss, idleCleanup=%smin%n",
                 jobConfig.parallelism,
+                jobConfig.clickhouseSinkParallelism,
                 jobConfig.kafkaTopic,
                 jobConfig.kafkaGroupId,
                 bootstrap,
                 chUrl,
                 jobConfig.enableClickhouseSink,
                 jobConfig.watermarkOutOfOrdernessSec,
+                jobConfig.watermarkIdlenessSec,
                 jobConfig.idleCleanupMinutes
         );
 
@@ -104,7 +106,9 @@ public class TaxiRealtimeJob {
         // 2) 워터마크 전략 (event.ts 기반)
         WatermarkStrategy<TaxiEvent> watermarkStrategy = WatermarkStrategy
                 .<TaxiEvent>forBoundedOutOfOrderness(Duration.ofSeconds(jobConfig.watermarkOutOfOrdernessSec))
-                .withTimestampAssigner((event, timestamp) -> parseTsOrMin(event));
+                .withTimestampAssigner((event, timestamp) -> parseTsOrMin(event))
+                // Allow watermark progress when some source partitions go idle.
+                .withIdleness(Duration.ofSeconds(jobConfig.watermarkIdlenessSec));
 
         KafkaSource<TaxiEvent> source = KafkaSource.<TaxiEvent>builder()
                 .setBootstrapServers(bootstrap)
@@ -163,7 +167,7 @@ public class TaxiRealtimeJob {
                             .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
                             .build()
             ))
-            .setParallelism(3);
+            .setParallelism(jobConfig.clickhouseSinkParallelism);
         } else {
             System.out.println("[WARN] ClickHouse sink disabled by FLINK_ENABLE_CLICKHOUSE_SINK=false");
         }
@@ -318,10 +322,12 @@ public class TaxiRealtimeJob {
         // ✅ 고정 기본값
         int parallelism = 12;
         int watermarkOutOfOrdernessSec = 5;
+        int watermarkIdlenessSec = 30;
         int idleCleanupMinutes = 20;
 
         int jdbcBatchSize = 50000;
         int jdbcBatchIntervalMs = 3000;
+        int clickhouseSinkParallelism = 12;
 
         String kafkaTopic = "taxi-event-data";
         String kafkaGroupId = "taxi-realtime-flink";
@@ -344,10 +350,15 @@ public class TaxiRealtimeJob {
         cfg.clickhouseTable = getEnvString("FLINK_CLICKHOUSE_TABLE", cfg.clickhouseTable);
 
         cfg.watermarkOutOfOrdernessSec = getEnvInt("FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC", cfg.watermarkOutOfOrdernessSec);
+        cfg.watermarkIdlenessSec = getEnvInt("FLINK_WATERMARK_IDLENESS_SEC", cfg.watermarkIdlenessSec);
         cfg.idleCleanupMinutes = getEnvInt("FLINK_IDLE_CLEANUP_MINUTES", cfg.idleCleanupMinutes);
 
         cfg.jdbcBatchSize = getEnvInt("FLINK_JDBC_BATCH_SIZE", cfg.jdbcBatchSize);
         cfg.jdbcBatchIntervalMs = getEnvInt("FLINK_JDBC_BATCH_INTERVAL_MS", cfg.jdbcBatchIntervalMs);
+        cfg.clickhouseSinkParallelism = getEnvInt("FLINK_CLICKHOUSE_SINK_PARALLELISM", cfg.parallelism);
+        if (cfg.clickhouseSinkParallelism <= 0) {
+            cfg.clickhouseSinkParallelism = cfg.parallelism;
+        }
 
         cfg.enableClickhouseSink = getEnvBoolean("FLINK_ENABLE_CLICKHOUSE_SINK", cfg.enableClickhouseSink);
         return cfg;

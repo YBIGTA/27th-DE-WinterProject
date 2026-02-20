@@ -1,0 +1,38 @@
+services:
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: grafana
+    restart: unless-stopped
+    env_file:
+      - ../../config/.env
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./provisioning/datasources/clickhouse.distributed.yml:/etc/grafana/provisioning/datasources/clickhouse.yml.template:ro
+      - ./provisioning/datasources/loki.distributed.yml:/etc/grafana/provisioning/datasources/loki.yml.template:ro
+    command:
+      - sh
+      - -c
+      - |
+        # 환경변수 치환하여 datasource 설정 생성
+        mkdir -p /etc/grafana/provisioning/datasources
+        envsubst < /etc/grafana/provisioning/datasources/clickhouse.yml.template > /etc/grafana/provisioning/datasources/clickhouse.yml
+        envsubst < /etc/grafana/provisioning/datasources/loki.yml.template > /etc/grafana/provisioning/datasources/loki.yml
+        # Grafana 실행
+        exec /run.sh
+    networks:
+      - kafka-network
+
+networks:
+  kafka-network:
+    external: true
+    name: kafka-network
+
+volumes:
+  grafana_data:
