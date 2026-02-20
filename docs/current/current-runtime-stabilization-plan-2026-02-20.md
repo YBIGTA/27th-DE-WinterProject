@@ -524,6 +524,22 @@ Conclusion:
 
 - Single-machine implementation remains stable and verified after latest code/config changes.
 
+### 7.13 Single-machine stack shutdown (pre-distributed) — 2026-02-20 16:49 +0900
+
+Action:
+
+- Stopped single-machine runtime stack before distributed phase:
+  - `infra/flink/docker-compose.yml`
+  - `infra/nginx/docker-compose.yml`
+  - `services/ingestor/docker-compose.yml`
+  - `infra/clickhouse/docker-compose.yml`
+  - `infra/kafka/docker-compose.yml`
+
+Result:
+
+- All single-machine containers were stopped and removed.
+- `docker ps` now shows only `k3d-taxi-registry`.
+
 ---
 
 ## 8. Distributed Verification Plan (next execution)
@@ -576,3 +592,121 @@ Parse status:
 - Revisit distributed slot model (`1/1/1`) if CPU is under-utilized under target load.
 - Revisit sink parallelism override (`FLINK_CLICKHOUSE_SINK_PARALLELISM`) if ClickHouse becomes bottleneck.
 - Revisit nginx `worker_connections=4096` based on observed concurrent connection profile.
+
+### 8.6 Local distributed simulation fallback (single host, no Tailscale)
+
+Use this when real distributed machines are offline but you still want to validate distributed compose behavior.
+
+Important:
+
+- Do **not** use `127.0.0.1` for distributed service IPs inside containers.
+- Use one host-reachable local IP (for example your LAN IP) for all `*_IP` entries during local simulation.
+- For one-host simulation, set `FLINK_IP=flink-jobmanager` so TaskManagers connect via Docker DNS (avoids host-port collision on RPC/Blob paths).
+- Backup and restore `config/.env` so production Tailscale values are preserved.
+
+Step A: prepare local distributed env
+
+```bash
+# 1) choose local host IP (example)
+export HOST_IP=<your_local_host_ip>
+
+# 2) backup current production env
+cp config/.env config/.env.prod.bak
+
+# 3) start from distributed template
+cp config/.env.distributed config/.env
+
+# 4) set all distributed IP keys to HOST_IP (except FLINK_IP)
+for k in GENERATOR_IP NGINX_IP INGESTOR_1_IP INGESTOR_2_IP INGESTOR_3_IP KAFKA_1_IP KAFKA_2_IP KAFKA_3_IP CLICKHOUSE_IP; do
+  sed -i "s|^${k}=.*|${k}=${HOST_IP}|" config/.env
+done
+
+# 5) local one-host override for Flink JM address
+sed -i "s|^FLINK_IP=.*|FLINK_IP=flink-jobmanager|" config/.env
+```
+
+Step B: bring up distributed stack on one host
+
+```bash
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up -d --build
+docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build
+```
+
+Step C: quick validation
+
+```bash
+curl -s http://localhost:8080/health
+curl -s http://localhost:8084/overview
+docker exec kafka-1 kafka-topics --bootstrap-server localhost:29092 --describe --topic taxi-event-data
+curl -s -X POST http://localhost:8080/ingest -H "Content-Type: application/json" -d '{"trip_id":970001,"ts":"2026-02-20T23:40:00Z","event":"PICKUP","lat":40.748,"lon":-73.985}'
+docker exec clickhouse clickhouse-client --query "SELECT count() FROM taxi_events"
+```
+
+Step D: cleanup + restore production env
+
+```bash
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env down
+docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env down
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env down
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env down
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env down
+
+mv config/.env.prod.bak config/.env
+```
+
+### 8.7 Executed local distributed simulation (this session) — 2026-02-20 17:06 ~ 17:10 +0900
+
+What was done:
+
+- Backed up production env:
+  - `config/.env.prod.tailscale.20260220-170627.bak`
+- Created local distributed env:
+  - `config/.env.local-distributed.20260220-170627`
+- Applied local simulation values:
+  - All service IP keys -> `100.99.149.67`
+  - Local one-host override: `FLINK_IP=flink-jobmanager`
+- Started distributed stack in order:
+  - Kafka -> ClickHouse -> Ingestor -> Nginx -> Flink
+
+Observed issue and fix:
+
+- Initial run with `FLINK_IP=100.99.149.67` caused TaskManager registration failure (`Could not resolve ResourceManager ... 100.99.149.67:6123`) in one-host simulation.
+- Switching to `FLINK_IP=flink-jobmanager` resolved it.
+
+Validation snapshot:
+
+| Check | Result | Evidence |
+|---|---|---|
+| Ingestor/Nginx/Kafka-UI health | Passed | `8081/8082/8083/8080/8090` returned `200`. |
+| Flink cluster status | Passed | `/overview` shows `taskmanagers=3`, `slots-total=3`, `jobs-running=1`. |
+| Flink checkpoints | Passed | Running job checkpoint counts observed with `completed=1`, `failed=0` in sampled run. |
+| Ingest API | Passed | `POST /ingest` returned `202`. |
+| ClickHouse flow | Passed | `SELECT count() FROM taxi_events` returned `315` after ingest traffic. |
+
+Current state:
+
+- Local distributed simulation stack is currently **running**.
+
+### 8.8 Finalization (requested) — 2026-02-20 17:12 +0900
+
+Summary:
+
+- Distributed profile validation target (local simulation) completed successfully.
+- No blocking issues observed in the local distributed run after `FLINK_IP=flink-jobmanager` one-host override.
+
+Cleanup and restore actions completed:
+
+- Stopped and removed local distributed simulation stack:
+  - Flink distributed compose
+  - Nginx distributed compose
+  - Ingestor distributed compose
+  - ClickHouse distributed compose
+  - Kafka distributed compose
+- Restored `config/.env` to original Tailscale backup:
+  - source: `config/.env.prod.tailscale.20260220-170627.bak`
+  - verification: SHA-256 of restored `config/.env` matches backup.
+- Post-cleanup runtime state:
+  - `docker ps` shows no project containers running.
