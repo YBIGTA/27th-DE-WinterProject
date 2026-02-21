@@ -13,23 +13,18 @@ services:
     networks:
       - kafka-network
 
-  # Promtail은 각 머신에서 로컬 Docker 모니터링만 담당
-  # 중앙 Loki로 로그 전송
+
   promtail:
-    image: grafana/promtail:3.3.2
-    container_name: promtail
+    image: grafana/promtail:2.9.0
+    container_name: promtail-loki
     privileged: true
-    env_file:
-      - ../../config/.env
-    environment:
-      LOKI_URL: "${LOKI_URL:-http://loki:3100}"
     volumes:
-      - ./promtail-config.distributed.yml:/etc/promtail/config.yml:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker:/var/lib/docker:ro
-    command:
-      - -config.file=/etc/promtail/config.yml
-      - -config.expand-env=true
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
     networks:
       - kafka-network
 

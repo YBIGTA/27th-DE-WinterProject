@@ -111,18 +111,26 @@ services:
       - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
-      - FLINK_ENABLE_PREDICTION_SINK=${FLINK_ENABLE_PREDICTION_SINK:-true}
-      - FLINK_CLICKHOUSE_PREDICTION_TABLE=${FLINK_CLICKHOUSE_PREDICTION_TABLE:-taxi_predictions}
-      - FLINK_ONNX_MODEL_PATH=${FLINK_ONNX_MODEL_PATH:-/opt/flink/model/taxi_demand_model.onnx}
-      - FLINK_MODEL_VERSION=${FLINK_MODEL_VERSION:-onnx_v1}
-      - FLINK_MODEL_FEATURE_LAG_STEPS=${FLINK_MODEL_FEATURE_LAG_STEPS:-20}
-      - FLINK_MODEL_HORIZON_STEPS=${FLINK_MODEL_HORIZON_STEPS:-5}
-      - FLINK_MODEL_INTERVAL_MINUTES=${FLINK_MODEL_INTERVAL_MINUTES:-3}
-    volumes:
-      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
+    restart: unless-stopped
 
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: promtail-flink
+    privileged: true
+    env_file:
+      - ../../config/.env
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    depends_on:
+      - flink-jobmanager
+    networks:
+      - kafka-network
 networks:
   kafka-network:
     external: true

@@ -25,6 +25,22 @@ services:
       timeout: 5s
       retries: 12
 
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: promtail-clickhouse
+    privileged: true
+    env_file:
+      - ../../config/.env
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    depends_on:
+      - clickhouse
+    networks:
+      - kafka-network
 networks:
   kafka-network:
     external: true

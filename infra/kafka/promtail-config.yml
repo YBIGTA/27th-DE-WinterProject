@@ -6,8 +6,6 @@ positions:
   filename: /tmp/positions.yaml
 
 clients:
-  # 중앙 Loki 서버로 전송
-  # envsubst로 ${LOKI_IP}:${LOKI_PORT}로 자동 치환됨
   - url: http://${LOKI_IP}:${LOKI_PORT}/loki/api/v1/push
 
 scrape_configs:

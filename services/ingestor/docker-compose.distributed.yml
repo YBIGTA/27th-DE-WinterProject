@@ -15,6 +15,10 @@ services:
       APP_TUNING_METRICS_INTERVAL_SEC: 10
     ports:
       - "${INGESTOR_1_PORT:-8081}:${INGESTOR_PORT:-8080}"
+    networks:
+      - kafka-network
+    depends_on:
+      - promtail-1
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
@@ -39,6 +43,10 @@ services:
       APP_TUNING_METRICS_INTERVAL_SEC: 10
     ports:
       - "${INGESTOR_2_PORT:-8082}:${INGESTOR_PORT:-8080}"
+    networks:
+      - kafka-network
+    depends_on:
+      - promtail-2
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
@@ -63,6 +71,10 @@ services:
       APP_TUNING_METRICS_INTERVAL_SEC: 10
     ports:
       - "${INGESTOR_3_PORT:-8083}:${INGESTOR_PORT:-8080}"
+    networks:
+      - kafka-network
+    depends_on:
+      - promtail-3
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
@@ -70,3 +82,53 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  promtail-1:
+    image: grafana/promtail:2.9.0
+    container_name: promtail-ingestor-1
+    privileged: true
+    env_file:
+      - ../../config/.env
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+  promtail-2:
+    image: grafana/promtail:2.9.0
+    container_name: promtail-ingestor-2
+    privileged: true
+    env_file:
+      - ../../config/.env
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+  promtail-3:
+    image: grafana/promtail:2.9.0
+    container_name: promtail-ingestor-3
+    privileged: true
+    env_file:
+      - ../../config/.env
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+networks:
+  kafka-network:
+    external: true
+    name: kafka-network
