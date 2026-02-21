@@ -40,6 +40,7 @@ cmake-build-*/
 /services/ingestor/test_ingestion$Stats.class
 /services/ingestor/.gradle/
 /services/ingestor/build/
+/services/ingestor/bin/
 /services/ingestor/out/
 /services/ingestor/.idea/
 /services/ingestor/*.iml
@@ -65,12 +66,13 @@ Thumbs.db
 
 # Environment files
 .env
-.env.local
-.env.docker
-
-# Keep template files
-!config/.env.single-machine
-!config/.env.distributed
 
 # claude
 .claude
+
+# local runtime artifacts
+.run/
+/generator/
+# Ignore model data
+model/data/processed
+model/data/raw

@@ -1,5 +1,5 @@
 events {
-    worker_connections 1024;
+    worker_connections 4096;
 }
 
 http {
@@ -10,27 +10,39 @@ http {
     access_log /var/log/nginx/access.log upstream_log;
 
     upstream ingestors {
-        least_conn;
+        random two least_conn;
         server ${INGESTOR_1_IP}:${INGESTOR_1_PORT};
         server ${INGESTOR_2_IP}:${INGESTOR_2_PORT};
         server ${INGESTOR_3_IP}:${INGESTOR_3_PORT};
+        keepalive 64;
     }
 
     server {
         listen 80;
+        client_max_body_size 10m;
 
         location / {
             proxy_pass http://ingestors;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_connect_timeout 60s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
+            proxy_connect_timeout 10s;
+            proxy_send_timeout 30s;
+            proxy_read_timeout 30s;
+            proxy_next_upstream error timeout http_502 http_503 http_504;
+            proxy_next_upstream_tries 2;
             proxy_buffering on;
-            proxy_buffer_size 4k;
-            proxy_buffers 8 4k;
-            proxy_busy_buffers_size 8k;
+            proxy_buffer_size 8k;
+            proxy_buffers 16 8k;
+            proxy_busy_buffers_size 16k;
+
+        }
+
+        location /health {
+            return 200 'OK';
+            add_header Content-Type text/plain;
         }
     }
 }

@@ -1,0 +1,91 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "kafka"
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  - job_name: "blackbox-http"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://clickhouse:8123/ping
+          - http://grafana:3000/api/health
+          - http://loki:3100/ready
+          - http://${FLINK_IP}:${FLINK_JOBMANAGER_PORT}/overview
+          - http://${NGINX_IP}:${NGINX_LB_PORT}
+          - http://${INGESTOR_1_IP}:${INGESTOR_1_PORT}
+          - http://${INGESTOR_2_IP}:${INGESTOR_2_PORT}
+          - http://${INGESTOR_3_IP}:${INGESTOR_3_PORT}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+      - source_labels: [__param_target]
+        regex: ".*8123.*"
+        target_label: service
+        replacement: "ClickHouse"
+      - source_labels: [__param_target]
+        regex: ".*3000.*"
+        target_label: service
+        replacement: "Grafana"
+      - source_labels: [__param_target]
+        regex: ".*3100.*"
+        target_label: service
+        replacement: "Loki"
+      - source_labels: [__param_target]
+        regex: ".*${FLINK_JOBMANAGER_PORT}.*"
+        target_label: service
+        replacement: "Flink"
+      - source_labels: [__param_target]
+        regex: ".*${NGINX_LB_PORT}.*"
+        target_label: service
+        replacement: "Nginx LB"
+      - source_labels: [__param_target]
+        regex: ".*${INGESTOR_1_PORT}.*"
+        target_label: service
+        replacement: "Ingestor 1"
+      - source_labels: [__param_target]
+        regex: ".*${INGESTOR_2_PORT}.*"
+        target_label: service
+        replacement: "Ingestor 2"
+      - source_labels: [__param_target]
+        regex: ".*${INGESTOR_3_PORT}.*"
+        target_label: service
+        replacement: "Ingestor 3"
+
+  - job_name: "blackbox-tcp"
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets:
+          - ${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT}
+        labels:
+          service: "Kafka 1"
+      - targets:
+          - ${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT}
+        labels:
+          service: "Kafka 2"
+      - targets:
+          - ${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT}
+        labels:
+          service: "Kafka 3"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

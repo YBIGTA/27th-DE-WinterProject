@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: promtail-remote
+    privileged: true
+    environment:
+      - LOKI_URL=${LOKI_URL:-http://100.98.239.46:3100}
+      - HOSTNAME=${HOSTNAME:-unknown}
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker:ro
+    command: >
+      -config.file=/etc/promtail/config.yml
+      -config.expand-env=true
+    restart: unless-stopped

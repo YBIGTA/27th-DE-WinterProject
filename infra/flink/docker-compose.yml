@@ -1,38 +1,51 @@
 services:
+  # 1. Flink JobManager
   flink-jobmanager:
     build: ../../services/flink-job
     image: flink-taxi-job:latest
     container_name: flink-jobmanager
     command: standalone-job --job-classname com.example.TaxiRealtimeJob
     ports:
-      - "${FLINK_JOBMANAGER_PORT:-8081}:8081"
+      - "${FLINK_JOBMANAGER_PORT:-8084}:8081"
     env_file:
       - ../../config/.env
     environment:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
-        parallelism.default: 1
+        restart-strategy.type: fixed-delay          
+        restart-strategy.fixed-delay.attempts: 100  
+        restart-strategy.fixed-delay.delay: 10s     
+        parallelism.default: 12
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
-      - FLINK_PARALLELISM=1
-      - FLINK_TASKMANAGER_SLOTS=2
+      - FLINK_PARALLELISM=12
       - FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC=5
       - FLINK_WINDOW_DEMAND_MINUTES=3
-      - FLINK_JDBC_BATCH_SIZE=5000
-      - FLINK_JDBC_BATCH_INTERVAL_MS=5000
+      - FLINK_JDBC_BATCH_SIZE=50000
+      - FLINK_JDBC_BATCH_INTERVAL_MS=3000
       - FLINK_KAFKA_TOPIC=taxi-event-data
       - FLINK_KAFKA_GROUP_ID=${FLINK_KAFKA_GROUP_ID:-taxi-realtime-flink}
       - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
+      - FLINK_ENABLE_PREDICTION_SINK=${FLINK_ENABLE_PREDICTION_SINK:-true}
+      - FLINK_CLICKHOUSE_PREDICTION_TABLE=${FLINK_CLICKHOUSE_PREDICTION_TABLE:-taxi_predictions}
+      - FLINK_ONNX_MODEL_PATH=${FLINK_ONNX_MODEL_PATH:-/opt/flink/model/taxi_demand_model.onnx}
+      - FLINK_MODEL_VERSION=${FLINK_MODEL_VERSION:-onnx_v1}
+      - FLINK_MODEL_FEATURE_LAG_STEPS=${FLINK_MODEL_FEATURE_LAG_STEPS:-20}
+      - FLINK_MODEL_HORIZON_STEPS=${FLINK_MODEL_HORIZON_STEPS:-5}
+      - FLINK_MODEL_INTERVAL_MINUTES=${FLINK_MODEL_INTERVAL_MINUTES:-3}
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
 
-  flink:
+  # 2. Flink TaskManager 1
+  flink-taskmanager-1:
     image: flink-taxi-job:latest
-    container_name: flink-taskmanager
+    container_name: flink-taskmanager-1
     command: taskmanager
     depends_on:
       - flink-jobmanager
@@ -42,21 +55,59 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 2
+
+        taskmanager.numberOfTaskSlots: 4
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
-      - FLINK_PARALLELISM=1
-      - FLINK_TASKMANAGER_SLOTS=2
-      - FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC=5
-      - FLINK_WINDOW_DEMAND_MINUTES=3
-      - FLINK_JDBC_BATCH_SIZE=5000
-      - FLINK_JDBC_BATCH_INTERVAL_MS=5000
-      - FLINK_KAFKA_TOPIC=taxi-event-data
-      - FLINK_KAFKA_GROUP_ID=${FLINK_KAFKA_GROUP_ID:-taxi-realtime-flink}
-      - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
-      - FLINK_CLICKHOUSE_DATABASE=default
-      - FLINK_CLICKHOUSE_TABLE=taxi_events
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
+    networks:
+      - kafka-network
+
+  # 3. Flink TaskManager 2
+  flink-taskmanager-2:
+    image: flink-taxi-job:latest
+    container_name: flink-taskmanager-2
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    env_file:
+      - ../../config/.env
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+
+        taskmanager.numberOfTaskSlots: 4
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
+      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
+    networks:
+      - kafka-network
+
+  # 4. Flink TaskManager 3
+  flink-taskmanager-3:
+    image: flink-taxi-job:latest
+    container_name: flink-taskmanager-3
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    env_file:
+      - ../../config/.env
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+
+        taskmanager.numberOfTaskSlots: 4
+      - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
+      - FLINK_CLICKHOUSE_HOST=clickhouse
+      - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
 

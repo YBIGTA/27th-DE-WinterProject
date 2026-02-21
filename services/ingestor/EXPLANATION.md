@@ -1,12 +1,13 @@
 ---
 component: Ingestor
 status: CURRENT
-last_reviewed: 2026-02-03
+last_reviewed: 2026-02-18
 core_files:
   - src/main/java/com/ingestion/IngestionApplication.java
   - src/main/java/com/ingestion/config/ReactorKafkaConfig.java
   - src/main/java/com/ingestion/controller/IngestionController.java
   - src/main/java/com/ingestion/service/IngestionService.java
+  - src/main/java/com/ingestion/service/DeadLetterQueue.java
   - src/main/java/com/ingestion/dto/TaxiEvent.java
   - src/main/java/com/ingestion/dto/BatchIngestResponse.java
   - src/main/resources/application.yml
@@ -37,24 +38,26 @@ flowchart TD
 
     subgraph "Inside each Ingestor"
         direction TB
-        C[IngestionController] -->|tryEmitNext / emitNext| S["Sinks.Many buffer (10,000)"]
-        S -->|asFlux| BT["bufferTimeout(500 events, 50ms)"]
-        BT -->|flatMap concurrency=4| K[KafkaSender.send]
-        K -->|retryWhen backoff x3| KF[Kafka Broker]
+        C[IngestionController] -->|tryEmitNext / emitNext| S["Sinks.Many buffer (app.tuning.buffer.size)"]
+        S -->|asFlux| BT["bufferTimeout(app.tuning.batch.size, app.tuning.batch.timeoutMs)"]
+        BT -->|flatMap concurrency=app.tuning.kafka.sendConcurrency| K[KafkaSender.send]
+        K -->|retryWhen(backoff x3) on stream error| KF[Kafka Broker]
+        BT -->|serialization failure| DLQ[(DLQ file)]
     end
 ```
 
 ### Concurrency Model
-- **Thread Model:** Event-loop (Netty). Both WebFlux and Reactor Kafka are fully non-blocking. No explicit thread creation anywhere in the application.
+- **Thread Model:** Event-loop (Netty). Both WebFlux and Reactor Kafka are fully non-blocking on the hot path. The app creates one explicit JVM shutdown-hook thread (`Runtime.addShutdownHook(new Thread(...))`) for graceful termination.
 - **Shared State:**
-  - `Sinks.Many<TaxiEvent>` — the single multicast buffer (capacity 10,000). Multiple HTTP request threads can emit into it concurrently.
+  - `Sinks.Many<TaxiEvent>` — the single multicast buffer (capacity from `app.tuning.buffer.size`, default 10,000). Multiple HTTP request threads can emit into it concurrently.
   - `AtomicLong` x5 (`eventsReceived`, `eventsProcessed`, `eventsFailed`, `eventsDropped`, `batchesSent`) — lock-free metric counters.
   - `KafkaSender` — singleton bean with a lazy connection; connects on the first `send()` call. Reactor-level `maxInFlight(1024)` caps the number of `SenderRecord`s in flight at the sender level; this is separate from the Kafka producer's `max.in.flight.requests.per.connection=5` which caps TCP-level requests per broker connection.
+  - `DeadLetterQueue` — file-appending DLQ for events that fail serialization. Writes JSONL to `app.dlq.filepath` (default `dead_letter_queue.jsonl`). Thread-safe via `synchronized`.
 - **Sync Primitives:**
   - `Sinks.EmitFailureHandler` — retries only on `FAIL_NON_SERIALIZED` (concurrent emit collision) via a busy-loop. All other failures are not retried.
   - `AtomicLong` — CAS-based lock-free increment for counters.
   - `AtomicInteger` — used in the batch endpoint to track `successCount` / `failedCount`.
-  - No `synchronized` or `Lock` anywhere. All concurrency is handled through Reactor primitives.
+  - `synchronized` — used in `DeadLetterQueue` for thread-safe file writes.
 
 ### Core Algorithm
 
@@ -72,15 +75,16 @@ flowchart TD
 
 **Internal pipeline (wired in `IngestionService @PostConstruct`)**
 1. `sink.asFlux()` — consumes events from the buffer as a Flux.
-2. `bufferTimeout(500, 50ms)` — forms a batch when either 500 events accumulate or 50 ms elapses, whichever comes first.
-3. `flatMap(sendBatchToKafkaReactive, concurrency=4)` — up to 4 batches are sent to Kafka concurrently.
+2. `bufferTimeout(batch.size, batch.timeoutMs)` — forms a batch when either configured size accumulates or configured timeout elapses (`app.tuning.batch.*`, defaults: 500 / 50 ms).
+3. `flatMap(sendBatchToKafkaReactive, sendConcurrency)` — configured concurrent batch sends (`app.tuning.kafka.sendConcurrency`, default: 4).
 4. Within each batch, a `SenderRecord` is created with `tripId` as the key and the Jackson-serialized JSON as the value.
-5. `kafkaSender.send()` is called. On failure, `Retry.backoff(3, 100ms, maxBackoff=2s)` is applied.
-6. If the entire subscription terminates, `.retry()` re-subscribes automatically.
+5. `kafkaSender.send()` is called. `SenderResult.exception()` failures are counted and logged per record; retry is **not** triggered by that signal alone.
+6. `Retry.backoff(3, 100ms, maxBackoff=2s)` handles stream-level errors from `kafkaSender.send()` (batch-level retry).
+7. If the entire subscription terminates, `.retry()` re-subscribes automatically.
 
 **Metrics & Shutdown**
-- `Flux.interval(10s)` — logs received / processed / failed / dropped / batch counts every 10 seconds.
-- `@PreDestroy` — calls `sink.tryEmitComplete()`, waits 5 s to let the pipeline drain, then closes the `KafkaSender`.
+- `Flux.interval(metrics.intervalSec)` — logs received / processed / failed / dropped / batch / DLQ-written counts on configured interval (`app.tuning.metrics.intervalSec`, default 10 seconds).
+- `@PreDestroy` — calls `sink.tryEmitComplete()`, waits 5 s to let the pipeline drain, closes the `KafkaSender`, then closes the `DeadLetterQueue` file.
 - `Runtime.addShutdownHook` — closes the Spring application context.
 
 ## Data Contract
@@ -90,6 +94,7 @@ flowchart TD
   - `GET /health` — no parameters.
 - **Output:**
   - Kafka topic `taxi-event-data` — key: `tripId` (String), value: `TaxiEvent` JSON. Partition assignment is determined by key hashing.
+  - Dead letter queue file (`app.dlq.filepath`, default `dead_letter_queue.jsonl`) — JSONL format, one line per failed event with fields: `timestamp`, `tripId`, `eventData`, `errorClass`, `errorMessage`, `stackTrace`.
   - HTTP responses: 202 (accepted), 429 (buffer full), 207 (partial batch success), 400 (empty batch), 500 (other failures).
   - `/ingest/batch` response body: `{ acceptedCount, rejectedCount, failedIndices[] }`.
     - **Note:** On overflow mid-batch, `rejectedCount` includes both the failed event and all *unprocessed* events after it, but `failedIndices` only contains indices that were actually attempted. The unprocessed tail is not listed in `failedIndices`.
@@ -120,8 +125,8 @@ flowchart TD
   | `total_amount` | Double | DROPOFF |
   | `trip_distance` | Double | DROPOFF |
 - **Invariants:**
-  - `tripId` is always present and used as the Kafka message key — events with the same `tripId` are guaranteed to land on the same partition.
-  - When the buffer exceeds 10,000 events, new events are dropped and the client receives 429. No internal retry for overflow.
+  - `tripId` is expected from the upstream producer and is used as the Kafka message key. The ingestor does not validate non-null; if absent, the key becomes `"null"` (string), and those events hash to the same partition.
+  - When the sink buffer exceeds configured capacity (`app.tuning.buffer.size`), new events are dropped and the client receives 429. No internal retry for overflow.
   - `acks=1` (leader ack only) — only the Kafka leader's receipt is confirmed. Follower replication failures are not detected.
 
 ## Design Decisions
@@ -129,23 +134,26 @@ flowchart TD
 |----------|-----|-----------|
 | Spring WebFlux (Netty event-loop) | Handles HTTP reception in a non-blocking manner, achieving high concurrency without being limited by thread count | Higher debugging complexity compared to Spring MVC |
 | Reactor Kafka (`KafkaSender`) | Kafka produce is also non-blocking, so it never blocks the HTTP event-loop | More complex API compared to Spring Kafka's `KafkaTemplate` |
-| `Sinks.Many` multicast buffer (10,000) | Decouples HTTP receive speed from Kafka send speed, absorbing latency spikes | Events can be lost on buffer overflow |
-| `bufferTimeout(500, 50ms)` | Dramatically reduces Kafka network round-trips compared to sending events individually | Introduces up to 50 ms of additional latency |
+| `Sinks.Many` multicast buffer (default 10,000, tunable) | Decouples HTTP receive speed from Kafka send speed, absorbing latency spikes | Events can be lost on buffer overflow |
+| `bufferTimeout` (default 500 events / 50ms, tunable) | Dramatically reduces Kafka network round-trips compared to sending events individually | Introduces batching latency up to the configured timeout |
 | `acks=1` (leader only) | Maximizes throughput | Acknowledged messages can be lost if the leader fails before replication |
 | LZ4 compression | Reduces network bandwidth with minimal CPU overhead | Lower compression ratio than Snappy or Gzip |
 | Nginx `least_conn` | Distributes load based on each instance's actual current connection count | Nginx must maintain per-upstream connection state (vs. stateless round-robin) |
 | 3-instance cluster | Horizontally scales both buffer capacity and Kafka send throughput beyond a single instance | Each instance holds an independent Sink, so event ordering by `tripId` is not guaranteed at the cluster level |
-| `stopOnError(false)` on KafkaSender | A single event's serialization or send failure does not terminate the entire pipeline | Failed events can be silently skipped |
+| `stopOnError(false)` on KafkaSender | A single event's serialization or send failure does not terminate the entire pipeline | Failed events are written to the DLQ instead of being silently skipped |
+| File-based DLQ for serialization failures | Events that fail JSON serialization are persisted to a JSONL file for inspection and replay, rather than being silently discarded | Uses `event.toString()` (Lombok-generated) since `ObjectMapper` is the thing that failed; manual JSON build avoids dependency on the failing serializer |
 | Kafka producer config in `ReactorKafkaConfig` (not `application.yml`) | `KafkaSender` is built programmatically; `spring.kafka.producer.*` in `application.yml` is **not** read by the Reactor Kafka sender | Editing producer settings in `application.yml` has no effect — changes must be made in `ReactorKafkaConfig.java` |
+| Runtime tuning via `app.tuning.*` | Batch/buffer/concurrency/metrics knobs can be changed via env vars (`APP_TUNING_*`) without code changes | Deployed values can diverge by environment if not documented |
 
 ## Failure Modes & Handling
 | Failure | Detection | Response |
 |---------|-----------|----------|
-| Sink buffer overflow (exceeds 10,000) | `tryEmitNext()` returns `FAIL_OVERFLOW` | Event is dropped; HTTP 429 is returned. The Generator backs off via its own rate limiter and retries. |
+| Sink buffer overflow (exceeds configured capacity) | `tryEmitNext()` returns `FAIL_OVERFLOW` | Event is dropped; HTTP 429 is returned. The Generator backs off via its own rate limiter and retries. |
 | Concurrent emit collision | `tryEmitNext()` returns `FAIL_NON_SERIALIZED` | Falls back to `emitNext()` with a busy-loop retry. If it still fails, treated as `FAIL_OVERFLOW`. |
-| Kafka send failure (network / broker) | `SenderResult.exception() != null` | `Retry.backoff(3, 100ms, max 2s)`. After 3 attempts, the entire batch is logged as failed and `eventsFailed` is incremented. |
-| JSON serialization failure | Exception thrown by `ObjectMapper.writeValueAsString()` | Only the affected event is skipped (`Mono.empty()`); `eventsFailed` increments; the rest of the batch continues. |
+| Kafka record send failure (broker/network/timeout) | `SenderResult.exception() != null` | Failed record is logged and `eventsFailed` increments. Other records in the stream continue (`stopOnError(false)`). |
+| Kafka sender stream error | Error signal from `kafkaSender.send(records)` Flux | `Retry.backoff(3, 100ms, max 2s)` retries the batch send; if still failing, batch-level error is logged. |
+| JSON serialization failure | Exception thrown by `ObjectMapper.writeValueAsString()` | The affected event is written to the file-based DLQ (`DeadLetterQueue`), `eventsFailed` increments, and the event is skipped for Kafka (`Mono.empty()`); the rest of the batch continues. |
 | Pipeline subscription termination | Terminal `onError` signal in the Flux chain | `.retry()` automatically re-subscribes to the pipeline. |
-| Ingestor instance crash | Nginx health check (`GET /health`) fails (10 s interval, 3 retries) | Nginx marks that upstream as unhealthy and routes traffic to the remaining instances. |
-| Graceful shutdown | JVM shutdown hook + Spring `@PreDestroy` | Sink is completed, pipeline drains for up to 5 s, then `KafkaSender` is closed. |
+| Ingestor instance crash / upstream failure | Upstream connection errors / 502/503/504 at Nginx; container healthcheck (`GET /health`) also marks unhealthy at compose level (10 s interval, 3 retries) | Nginx `least_conn` + passive failover (`max_fails`, `fail_timeout`, `proxy_next_upstream`) routes traffic to remaining instances. |
+| Graceful shutdown | JVM shutdown hook + Spring `@PreDestroy` | Sink is completed, pipeline drains for up to 5 s, then `KafkaSender` and `DeadLetterQueue` are closed. |
 | Kafka broker unavailable at startup | `KafkaSender` uses a lazy connection | The application starts without blocking. Actual send failures are covered by the retry policy. |

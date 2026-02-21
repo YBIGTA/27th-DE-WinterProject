@@ -1,0 +1,14 @@
+<clickhouse>
+  <profiles>
+    <default>
+      <!-- async insert: 순간 부하 완충 -->
+      <async_insert>1</async_insert>
+      <!-- 큐에 넣고 바로 OK -->
+      <wait_for_async_insert>0</wait_for_async_insert>
+      <!-- 어느 정도 모아 flush (ms) -->
+      <async_insert_busy_timeout_ms>2000</async_insert_busy_timeout_ms>
+      <!-- async 큐 최대 크기 -->
+      <async_insert_max_data_size>104857600</async_insert_max_data_size> <!-- 100MiB -->
+    </default>
+  </profiles>
+</clickhouse>

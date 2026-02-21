@@ -17,9 +17,11 @@ import reactor.util.retry.Retry;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 
 @Slf4j
 @Service
@@ -33,8 +35,12 @@ public class IngestionService {
     @Value("${app.kafka.topic:taxi-event-data}")
     private String topicName;
 
+    @Value("${app.dlq.filepath:dead_letter_queue.jsonl}")
+    private String dlqFilePath;
+
     private Sinks.Many<TaxiEvent> sink;
     private int bufferSize;
+    private DeadLetterQueue dlq;
 
     // Metrics for structured logging
     private final AtomicLong eventsReceived = new AtomicLong(0);
@@ -43,17 +49,19 @@ public class IngestionService {
     private final AtomicLong eventsDropped = new AtomicLong(0);
     private final AtomicLong batchesSent = new AtomicLong(0);
 
-    // Custom emit failure handler for thread-safe emission
-    private final Sinks.EmitFailureHandler emitFailureHandler = (signalType, emitResult) -> {
-        if (emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
-            // Busy-loop retry for concurrent access - this is expected under high load
-            return true;  // retry
-        }
-        return false;  // don't retry for other failures (OVERFLOW, CANCELLED, etc.)
-    };
+    // Bounded retry policy for FAIL_NON_SERIALIZED to avoid CPU spin under contention.
+    private static final int EMIT_RETRY_LIMIT = 10;
+    private static final long EMIT_RETRY_INITIAL_BACKOFF_NS = 50_000L; // 50us
+    private static final long EMIT_RETRY_MAX_BACKOFF_NS = 2_000_000L;  // 2ms
 
     @PostConstruct
     public void init() {
+        try {
+            dlq = new DeadLetterQueue(dlqFilePath);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to initialize dead letter queue at " + dlqFilePath, e);
+        }
+
         bufferSize = tuning.getBuffer().getSize();
         int batchSize = tuning.getBatch().getSize();
         long batchTimeoutMs = tuning.getBatch().getTimeoutMs();
@@ -120,8 +128,9 @@ public class IngestionService {
                 } catch (Exception e) {
                     log.error("[SERIALIZATION] Failed to serialize event: trip_id={}",
                               event.getTripId(), e);
+                    dlq.write(event, e);
                     eventsFailed.incrementAndGet();
-                    return Mono.empty();  // Skip this event
+                    return Mono.empty();  // Skip for Kafka, but persisted in DLQ
                 }
             });
 
@@ -160,32 +169,32 @@ public class IngestionService {
 
     /**
      * Ingest a single event. Returns emission result for controller to check.
-     * Uses emitNext with failure handler to handle FAIL_NON_SERIALIZED (concurrent access).
      */
     public Sinks.EmitResult ingest(TaxiEvent event) {
         eventsReceived.incrementAndGet();
 
-        // First try with tryEmitNext to get the result
+        // Bounded retries with tiny backoff for concurrent sink emission.
         Sinks.EmitResult result = sink.tryEmitNext(event);
+        int retryCount = 0;
+        long backoffNs = EMIT_RETRY_INITIAL_BACKOFF_NS;
 
-        if (result == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
-            // Concurrent access detected - use emitNext with retry handler
-            try {
-                sink.emitNext(event, emitFailureHandler);
-                return Sinks.EmitResult.OK;
-            } catch (Exception e) {
-                // emitNext failed even after retries
-                eventsDropped.incrementAndGet();
-                log.warn("[EMIT] Failed to emit after retries: trip_id={}, error={}",
-                         event.getTripId(), e.getMessage());
-                return Sinks.EmitResult.FAIL_OVERFLOW;
-            }
+        while (result == Sinks.EmitResult.FAIL_NON_SERIALIZED && retryCount < EMIT_RETRY_LIMIT) {
+            LockSupport.parkNanos(backoffNs);
+            backoffNs = Math.min(backoffNs * 2, EMIT_RETRY_MAX_BACKOFF_NS);
+            result = sink.tryEmitNext(event);
+            retryCount++;
         }
 
         if (result == Sinks.EmitResult.FAIL_OVERFLOW) {
             eventsDropped.incrementAndGet();
             log.warn("[BACKPRESSURE] Buffer full, event dropped: trip_id={}, buffer_usage=100%",
                      event.getTripId());
+        } else if (result != Sinks.EmitResult.OK) {
+            log.error("[EMIT_ERROR] Failed to emit event: result={}, trip_id={}",
+                      result, event.getTripId());
+        } else if (retryCount > 0) {
+            log.debug("[EMIT_RETRY] Succeeded after {} retries: trip_id={}",
+                      retryCount, event.getTripId());
         }
 
         return result;
@@ -225,9 +234,10 @@ public class IngestionService {
 
         log.info("[METRICS] events_received={}, events_processed={}, events_failed={}, " +
                  "events_dropped={}, batches_sent={}, buffer_usage={}%, " +
-                 "success_rate={}",
+                 "dlq_written={}, success_rate={}",
                  received, processed, failed, dropped, batches,
                  getBufferUsagePercent(),
+                 dlq != null ? dlq.getTotalWritten() : 0,
                  received > 0 ? String.format("%.2f%%", (processed * 100.0 / received)) : "N/A");
     }
 
@@ -247,6 +257,11 @@ public class IngestionService {
 
         // Close Kafka sender
         kafkaSender.close();
+
+        // Close DLQ file
+        if (dlq != null) {
+            dlq.close();
+        }
 
         logMetrics();
         log.info("[SHUTDOWN] Ingestion service shut down gracefully");

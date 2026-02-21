@@ -63,7 +63,27 @@
       <groupId>com.clickhouse</groupId>
       <artifactId>clickhouse-jdbc</artifactId>
       <version>0.6.0</version>
-      <classifier>http</classifier> 
+      <classifier>all</classifier>
+    </dependency>
+
+    <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+      <version>1.18.0</version>
+    </dependency>
+
+    <!-- Required by clickhouse-jdbc's Apache HTTP provider in Flink runtime -->
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <version>5.2.1</version>
+    </dependency>
+
+    <!-- Required by clickhouse-jdbc's Apache HTTP provider in Flink runtime -->
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <version>5.2.1</version>
     </dependency>
   </dependencies>
 

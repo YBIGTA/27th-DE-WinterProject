@@ -6,6 +6,8 @@
 - Job source: `services/flink-job`
 
 Flink job runtime 값(parallelism/topic/jdbc/table 등)은 compose의 `FLINK_*` 환경변수에서 로딩한다.
+현재 Job은 원본 이벤트 적재(`taxi_events`)와 ONNX 기반 예측 적재(`taxi_predictions`)를 동시에 수행한다.
+`taxi_events` 적재 라인은 집계/예측 라인과 분리되어 동작하며, 원본 이벤트 스트림을 직접 JDBC sink로 저장한다.
 
 ## 실행 전 준비
 ```bash
@@ -25,10 +27,46 @@ cd services/flink-job && mvn clean package && cd ../..
 docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
 
 # distributed
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager flink
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager
+
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-1
+
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-2
+
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-3
 ```
+
+## ONNX/Prediction 관련 주요 환경변수
+- `FLINK_ENABLE_PREDICTION_SINK` (기본 `true`)
+- `FLINK_CLICKHOUSE_PREDICTION_TABLE` (기본 `taxi_predictions`)
+- `FLINK_ONNX_MODEL_PATH` (기본 `/opt/flink/model/taxi_demand_model.onnx`)
+- `FLINK_MODEL_VERSION` (기본 `onnx_v1`)
+- `FLINK_MODEL_FEATURE_LAG_STEPS` (기본 `20`)
+- `FLINK_MODEL_HORIZON_STEPS` (기본 `5`)
+- `FLINK_MODEL_INTERVAL_MINUTES` (기본 `3`)
+
+모델 파일은 compose에서 `../../model/models:/opt/flink/model:ro`로 마운트된다.
 
 ## 확인
 ```bash
-docker logs -f flink-taskmanager
+# single-machine
+docker logs -f flink-taskmanager-1
+
+# distributed
+docker logs -f flink-taskmanager-1
+
+docker logs -f flink-taskmanager-2
+
+docker logs -f flink-taskmanager-3
+```
+
+또는
+
+http://localhost:8084
+
+## 적재 확인 (ClickHouse)
+```bash
+docker exec -i clickhouse clickhouse-client --query "SELECT count(*) FROM default.taxi_events"
+docker exec -i clickhouse clickhouse-client --query "SELECT count(*) FROM default.taxi_predictions"
+docker exec -i clickhouse clickhouse-client --query "SELECT prediction_time,target_time,zone_id,predicted_demand,model_version FROM default.taxi_predictions ORDER BY prediction_time DESC LIMIT 20"
 ```

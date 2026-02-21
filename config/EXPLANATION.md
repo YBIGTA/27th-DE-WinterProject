@@ -1,12 +1,12 @@
 ---
 component: Environment-Based Deployment Configuration System
 status: CURRENT
-last_reviewed: 2026-02-04
+last_reviewed: 2026-02-16
 pipeline: generator -> nginx -> ingestor -> kafka -> (s3 sink connector -> S3) / (flink -> clickhouse)
 core_files:
   - config/.env.single-machine
   - config/.env.distributed
-  - config/README.md
+  - docs/runbooks/runtime.md
   - infra/kafka/docker-compose.yml
   - infra/kafka/docker-compose.distributed.yml
   - infra/clickhouse/docker-compose.yml
@@ -40,6 +40,27 @@ core_files:
 | Ingestor | `services/ingestor/docker-compose.*.yml` | Spring properties via env (`APP_*`, `SPRING_*`) |
 | Flink | `infra/flink/docker-compose.*.yml` | Job config via env (`FLINK_*`) |
 | Generator | `services/generator/config/default.yaml` | native C++ YAML parser (`services/generator/generate.cpp`) |
+
+## Component Runtime Ownership Matrix
+| Component | Runtime Owner | Runtime Values Source |
+|---|---|---|
+| Kafka | `infra/kafka/docker-compose.*.yml` | compose `environment` (hardcoded tuning) |
+| ClickHouse | `infra/clickhouse/docker-compose.*.yml` | compose `environment` + schema mount |
+| Nginx (SM) | `infra/nginx/docker-compose.yml` | static `infra/nginx/nginx.single-machine.conf` |
+| Nginx (DM) | `infra/nginx/docker-compose.distributed.yml` | template + `.env` IP/PORT envsubst |
+| Ingestor | `services/ingestor/docker-compose.*.yml` | compose `environment` (`APP_*`, `SPRING_*`) |
+| Flink | `infra/flink/docker-compose.*.yml` | compose `environment` (`FLINK_*`) |
+| Generator | native run (`services/generator`) | `services/generator/config/default.yaml` |
+
+## Compose 연결 원칙
+1. `config/.env` 준비 (`.env.single-machine` 또는 `.env.distributed` 복사)
+2. 필요한 컴포넌트 compose만 직접 실행
+3. 항상 `--env-file config/.env` 명시
+
+## 제약
+- `config/.env`에는 `*_IP`, `*_PORT`만 허용
+- 배포 서비스에서 `*/config/default.yaml` 마운트 금지
+- Generator는 compose 서비스가 아니라 native 실행
 
 ## Compose 변수 치환 주의
 분산 모드 `${KAFKA_1_IP}` 같은 값은 compose 파싱 시점 치환값이다.

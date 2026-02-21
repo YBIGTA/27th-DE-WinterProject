@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS default.taxi_events
     `event` String
 )
 ENGINE = MergeTree
-ORDER BY (trip_id, ts);
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (ts, zone_id, trip_id);
 
 CREATE TABLE IF NOT EXISTS default.taxi_zones
 (
@@ -18,3 +19,15 @@ CREATE TABLE IF NOT EXISTS default.taxi_zones
 )
 ENGINE = MergeTree
 ORDER BY zone_id;
+
+CREATE TABLE IF NOT EXISTS default.taxi_predictions
+(
+    `prediction_time` DateTime,
+    `target_time` DateTime,
+    `zone_id` UInt32,
+    `predicted_demand` Float32,
+    `model_version` String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(prediction_time)
+ORDER BY (prediction_time, zone_id, model_version);

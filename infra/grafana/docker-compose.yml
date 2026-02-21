@@ -14,6 +14,29 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./provisioning:/etc/grafana/provisioning
+      - geojson_data:/usr/share/grafana/public/geojson:ro
+    networks:
+      - kafka-network
+
+  geojson-updater:
+    image: python:3.12-alpine
+    container_name: geojson-updater
+    restart: unless-stopped
+    environment:
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_HTTP_PORT=8123
+      - MASTER_GEOJSON=/master/taxi_zones.geojson
+      - OUTPUT_DIR=/data/geojson
+      - UPDATE_INTERVAL=900
+      - GEOJSON_HTTP_PORT=18081
+      - LOOKBACK_MINUTES=1440
+    volumes:
+      - ./scripts/update_geojson.py:/app/update_geojson.py:ro
+      - ./provisioning/geojson/taxi_zones.geojson:/master/taxi_zones.geojson:ro
+      - geojson_data:/data/geojson
+    ports:
+      - "${GEOJSON_HTTP_PORT:-18081}:18081"
+    command: python /app/update_geojson.py
     networks:
       - kafka-network
 
@@ -24,3 +47,4 @@ networks:
 
 volumes:
   grafana_data:
+  geojson_data:

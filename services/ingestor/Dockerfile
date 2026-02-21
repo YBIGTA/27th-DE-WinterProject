@@ -14,13 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 # Add non-root user for security
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
-USER appuser
+# Ensure runtime directories are writable by appuser
+RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
-COPY --from=build /app/build/libs/*.jar app.jar
+COPY --from=build --chown=appuser:appgroup /app/build/libs/*.jar app.jar
+
+USER appuser
 
 # Default environment variables
 ENV SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 ENV SERVER_PORT=8080
+ENV APP_DLQ_FILEPATH=/app/data/dead_letter_queue.jsonl
 
 EXPOSE 8080
 

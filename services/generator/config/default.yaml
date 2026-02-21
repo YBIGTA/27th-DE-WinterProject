@@ -2,8 +2,8 @@
 # In distributed mode, .env (NGINX_IP + NGINX_LB_PORT) overrides ingestion_url.
 
 date_range:
-  start: "2020-01"
-  end: "2020-12"
+  start: "2024-01"
+  end: "2024-12"
 
 playback:
   speed: 50
