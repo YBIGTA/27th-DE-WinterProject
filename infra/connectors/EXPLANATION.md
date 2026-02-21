@@ -1,7 +1,7 @@
 ---
 component: Kafka Connect S3 Sink
 status: CURRENT
-last_reviewed: 2026-02-02
+last_reviewed: 2026-02-21
 core_files:
   - infra/connectors/s3-sink-config.template.json
   - infra/connectors/README.md
@@ -31,7 +31,7 @@ flowchart TD
     end
 
     subgraph "Kafka Connect Worker"
-        B(S3 Sink Connector Task)
+        B(S3 Sink Connector Tasks)
         B -- " Consume" --> A
         C{Buffer <br> (flush.size=3)}
         B -- "Accumulate" --> C
@@ -52,7 +52,7 @@ flowchart TD
 ```
 
 ### Concurrency Model
-- **Task Model:** `tasks.max`가 `1`로 설정되어 있어, 이 커넥터는 항상 단일 태스크로 실행됩니다. Kafka Connect는 토픽의 파티션을 이 태스크에 할당합니다. 만약 태스크 수를 늘리면 여러 태스크가 병렬로 파티션을 나눠 처리하게 됩니다.
+- **Task Model:** `tasks.max`가 `4`로 설정되어 있어, Kafka Connect가 토픽 파티션을 최대 4개 태스크에 분산해 병렬 처리할 수 있습니다. 실제 활성 태스크 수는 워커 수와 파티션 수에 따라 달라집니다.
 - **State Management:** 소비한 토픽의 오프셋(Offset)과 같은 커넥터의 상태는 Kafka Connect가 내부 토픽을 사용하여 관리합니다. 따라서 커넥터가 재시작되어도 마지막으로 처리했던 지점부터 작업을 이어갈 수 있습니다.
 
 ### Core Algorithm

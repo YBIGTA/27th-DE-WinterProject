@@ -1,7 +1,7 @@
 ---
 component: clickhouse-docker-compose
 status: CURRENT
-last_reviewed: 2026-02-20
+last_reviewed: 2026-02-21
 core_files:
   - infra/clickhouse/docker-compose.yml
   - infra/clickhouse/docker-compose.distributed.yml
@@ -25,8 +25,9 @@ core_files:
 4. `schema.sql`을 `/docker-entrypoint-initdb.d/schema.sql`에 마운트해 초기 스키마 적용
 5. 기본 테이블 생성:
    - `default.taxi_events` (원본 이벤트 적재)
+   - `default.taxi_zones` (zone 메타/좌표 테이블)
    - `default.taxi_predictions` (Flink ONNX 예측 결과 적재)
-5. `/ping` 헬스체크로 생존 확인
+6. `/ping` 헬스체크로 생존 확인
 
 참고:
 - Demolish Ops 이후 `infra/clickhouse/config/default.yaml` 의존은 제거되었고,

@@ -37,7 +37,7 @@ flowchart TD
     E --> F[Process: Per-Trip Reorder]
     F --> N[Side Output: LATE_EVENTS]
     F --> G[Map: Spatial Join]
-    G --> H[Filter: Valid Zone]
+    G --> H[Filter: zone_id != null]
     H --> I[Track 1: JDBC Sink (taxi_events)]
     H --> J[Filter: PICKUP Event]
     J --> K[Window: 3min Tumbling]
@@ -64,13 +64,14 @@ flowchart TD
 * **ONNX 추론**: zone별 히스토리에서 `lag_20`이 확보된 시점부터 피처(`zone_id`,`hour`,`day_of_week`,`is_weekend`,`demand_lag_20`)를 생성해 ONNX로 추론하고, `prediction_time`/`target_time(+15분)`과 함께 ClickHouse에 적재합니다.
 
 ## Data Contract
-* **Input**: Kafka `taxi-event-data` 토픽의 JSON 데이터 (`trip_id`, `ts`, `lat`, `lon`, `event`).
+* **Input**: Kafka `taxi-event-data` 토픽의 JSON 데이터. 필수는 `trip_id`, `ts`이며 `lat`/`lon`/`event`는 nullable로 처리됩니다.
 * **Output**:
     * **ClickHouse**: `trip_id`, `ts`, `zone_id`, `event` (정규화된 문자열).
     * **ClickHouse (Prediction)**: `prediction_time`, `target_time`, `zone_id`, `predicted_demand`, `model_version`.
     * **Console**: `[ML_DEMAND] Zone: {id}, Time: {ts}, Count: {n}`.
 * **Invariants**:
     * `trip_id`/`ts` 누락 또는 `ts` 파싱 실패 데이터는 **raw filter 단계에서 drop**됩니다.
+    * `lat`/`lon` 누락 이벤트는 drop되지 않고 `zone_id=-1`로 전달됩니다(`SpatialJoinFunction`).
     * `LATE_EVENTS` 사이드 아웃풋은 워터마크 지연(`eventTs <= wm`) 및 재정렬 중 역전(`ts < lastEmittedTs`) 이벤트를 전달합니다.
     * 예측은 `lag_20` 상태가 누적된 이후부터만 생성됩니다.
 

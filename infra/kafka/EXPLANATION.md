@@ -1,7 +1,7 @@
 ---
 component: Kafka
 status: CURRENT
-last_reviewed: 2026-02-20
+last_reviewed: 2026-02-21
 core_files:
   - infra/kafka/docker-compose.yml
   - infra/kafka/docker-compose.distributed.yml
@@ -65,7 +65,7 @@ flowchart TD
    - Single-machine: external per-broker ports, shared internal/controller port values.
    - Distributed: per-broker external/internal/controller ports and host IPs.
 5. Messages are appended to partitions and persisted under `/var/lib/kafka/data` (per broker volume).
-6. Internal Kafka topics and transactional state use replication settings in compose (`replication.factor=2`, `min.isr=2` for txn log).
+6. Internal Kafka topics and transactional state use replication settings in compose (`default.replication.factor=3`, transaction state replication=3, `min.insync.replicas=2`).
 7. `kafka-ui` connects via configured bootstrap servers for metadata/topic inspection.
 
 ## Data Contract
@@ -84,7 +84,7 @@ flowchart TD
   - `KAFKA_NODE_ID` values must be unique per broker.
   - `KAFKA_CONTROLLER_QUORUM_VOTERS` must be consistent and routable from all brokers.
   - `KAFKA_ADVERTISED_LISTENERS` must expose reachable host/IP:port pairs for the target deployment mode.
-  - Replication settings (`KAFKA_DEFAULT_REPLICATION_FACTOR=2`, txn replication/min ISR = 2) require at least two healthy brokers.
+  - Replication settings (`KAFKA_DEFAULT_REPLICATION_FACTOR=3`, txn replication=3, `KAFKA_MIN_INSYNC_REPLICAS=2`) require at least two healthy brokers for in-sync writes and generally three for full-replica availability.
 
 ## Design Decisions
 | Decision | Why | Trade-off |
@@ -92,7 +92,7 @@ flowchart TD
 | KRaft mode (`broker,controller`) without ZooKeeper | Simplifies deployment topology and removes ZooKeeper dependency | Controller and broker share process resources; quorum config errors directly affect cluster availability |
 | 3-broker topology | Supports replication and basic fault tolerance | Higher resource usage than single broker |
 | Separate listener roles (`EXTERNAL`, `INTERNAL`, `CONTROLLER`) | Cleanly separates client traffic, broker traffic, and quorum traffic | More ports and environment variables to manage |
-| Replication defaults set to `2` | Balances durability and throughput in a 3-node cluster | Cannot tolerate two-broker loss for replicated writes |
+| Replication defaults set to `3` (`min ISR=2`) | Increases durability for default topics and internal state in a 3-node cluster | Higher broker quorum dependency than RF=2 under degraded conditions |
 | Per-broker persistent volumes | Preserves logs across container restarts | Requires disk capacity monitoring and cleanup policy management |
 | Distinct distributed per-broker ports (`9092/9094/9096`, `29092/29094/29096`, `19093/19094/19095`) | Avoids port collisions and clarifies routing in multi-machine/local simulation | More complex network configuration and firewall rules |
 

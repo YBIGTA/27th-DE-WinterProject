@@ -1,7 +1,7 @@
 ---
 component: loki-promtail-docker-compose
 status: CURRENT
-last_reviewed: 2026-02-09
+last_reviewed: 2026-02-21
 core_files:
   - infra/loki/docker-compose.yml
   - infra/loki/loki-config.yml
@@ -19,9 +19,9 @@ core_files:
 ```
 
 ## Core behavior
-1. Loki 컨테이너 실행 (grafana/loki:2.9.0)
-2. Promtail 컨테이너 실행 (grafana/promtail:2.9.0)
-3. Promtail이 `/var/lib/docker/containers/*/*-json.log` 수집
+1. Loki 컨테이너 실행 (`grafana/loki:3.3.2`)
+2. Promtail 컨테이너 실행 (`grafana/promtail:3.3.2`)
+3. Promtail이 Docker SD + `__path__`를 통해 `/var/lib/docker/containers/*/*-json.log`를 수집
 4. Loki는 `/tmp/loki`에 tsdb/인덱스를 저장
 5. Grafana는 `http://loki:3100`로 로그 조회
 

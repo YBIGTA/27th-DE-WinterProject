@@ -1,7 +1,7 @@
 ---
 component: Nginx Load Balancer
 status: CURRENT
-last_reviewed: 2026-02-18
+last_reviewed: 2026-02-21
 core_files:
   - infra/nginx/nginx.single-machine.conf
   - infra/nginx/templates/nginx.distributed.conf.template
@@ -15,7 +15,7 @@ core_files:
 # Nginx Load Balancer
 
 ## Role
-Receives generator HTTP ingest traffic and forwards it to three ingestor replicas using `least_conn` with upstream retry/failover settings.
+Receives generator HTTP ingest traffic and forwards it to three ingestor replicas using `random two least_conn` with upstream retry settings.
 
 ## I/O Flow
 ```
@@ -38,12 +38,12 @@ flowchart TD
     N --> G
 
     E1[Single-machine mode] --> H1[location /health returns 200 OK in Nginx]
-    E2[Distributed mode] --> H2[No dedicated /health location in Nginx template]
+    E2[Distributed mode] --> H2[location /health returns 200 OK in Nginx]
 ```
 
 ### Concurrency Model
 - **Thread Model:** Nginx event-driven worker model (`events { worker_connections ... }`) handling many concurrent sockets per worker.
-- **Shared State:** Managed inside Nginx runtime, mainly upstream peer health counters (`max_fails`, `fail_timeout`), upstream keepalive connection pool (`keepalive 32`), and access log buffers/files.
+- **Shared State:** Managed inside Nginx runtime, mainly upstream selection/runtime counters, upstream keepalive connection pool (`keepalive 64`), and access log buffers/files.
 - **Sync Primitives:** No application-level primitives such as `synchronized`, `Lock`, `CompletableFuture`, or `volatile` are used in this component code. Concurrency control is delegated to Nginx internals.
 
 ### Core Algorithm
@@ -53,12 +53,12 @@ flowchart TD
      - `/health` -> immediate `200 OK` from Nginx.
      - all other paths -> proxy to `upstream ingestors`.
    - Distributed template:
-     - all paths (including `/health`) -> proxy to `upstream ingestors`.
-3. Select upstream by `least_conn`.
+     - `/health` -> immediate `200 OK` from Nginx.
+     - all other paths -> proxy to `upstream ingestors`.
+3. Select upstream by `random two least_conn`.
 4. Forward request with preserved client headers (`Host`, `X-Real-IP`, `X-Forwarded-For`, and in single-machine config also `X-Forwarded-Proto`).
 5. On upstream errors/timeouts/502/503/504, retry another upstream up to `proxy_next_upstream_tries 2`.
-6. Mark problematic upstreams passively using `max_fails=3 fail_timeout=30s`.
-7. Return upstream response status/body to caller and write access logs with upstream timing/status fields.
+6. Return upstream response status/body to caller and write access logs with upstream timing/status fields.
 
 ## Data Contract
 - **Input:**
@@ -69,28 +69,28 @@ flowchart TD
   - Request body limit: `client_max_body_size 10m`.
 - **Output:**
   - Proxied HTTP response from selected ingestor (`202`, `207`, `400`, `429`, `500`, etc.).
-  - Single-machine only: `GET /health` returns plain `OK` directly from Nginx.
+  - Both modes: `GET /health` returns plain `OK` directly from Nginx.
   - Access log entries with `upstream_addr`, `upstream_status`, `request_time`, `upstream_response_time`.
 - **Invariants:**
   - Exactly three upstream targets are configured in both modes.
-  - Load-balancing policy is always `least_conn`.
+  - Load-balancing policy is always `random two least_conn`.
   - Upstream retry policy is always `error timeout http_502 http_503 http_504` with max `2` tries.
   - Distributed mode upstream addresses are resolved from `.env` variables through `envsubst` at container start.
 
 ## Design Decisions
 | Decision | Why | Trade-off |
 |----------|-----|-----------|
-| `least_conn` upstream policy | Better balancing under uneven per-request latency than pure round-robin | Requires per-upstream connection tracking state |
-| Passive failover (`max_fails`, `fail_timeout`, `proxy_next_upstream`) | Keeps config simple in OSS Nginx without active health-check modules | Backend can receive some failed requests before being considered failed |
-| Keepalive upstream pool (`keepalive 32`) | Reduces TCP connection setup overhead to ingestors | Consumes persistent upstream connection slots/memory |
+| `random two least_conn` upstream policy | Reduces global contention vs pure least-conn while still preferring less-loaded backends | Adds randomness, so assignment can be less globally optimal than full least-conn scans |
+| Request-level failover (`proxy_next_upstream`, `proxy_next_upstream_tries`) | Retries transient upstream failures without extra modules | No long-term upstream quarantine; persistent failures still need external remediation |
+| Keepalive upstream pool (`keepalive 64`) | Reduces TCP connection setup overhead to ingestors | Consumes persistent upstream connection slots/memory |
 | Distributed config via `envsubst` template | One template supports multiple machine IP/port deployments | Startup depends on complete `.env` variables; missing vars can break generated config |
-| Single-machine `/health` served by Nginx | Fast LB liveness check independent of ingestor status | `/health` does not represent upstream ingestor health in single-machine mode |
+| `/health` served by Nginx in both modes | Fast LB liveness check independent of ingestor status | `/health` does not represent upstream ingestor health |
 
 ## Failure Modes & Handling
 | Failure | Detection | Response |
 |---------|-----------|----------|
 | One ingestor returns `502/503/504` or times out | `proxy_next_upstream` conditions are met | Retry another ingestor (up to 2 tries) and surface final response |
-| Repeated failures from same ingestor | Upstream peer exceeds `max_fails=3` within `fail_timeout=30s` window | Peer is passively treated as failed for fail-timeout period |
+| Repeated failures from same ingestor | High upstream error ratio persists in access/error logs | Immediate per-request retry still applies; fix/remove bad backend via container orchestration |
 | Backend connection/read/send timeout | `proxy_connect_timeout` / `proxy_read_timeout` / `proxy_send_timeout` | Request fails over to another upstream if retry budget remains |
 | Oversized request body | Nginx enforces `client_max_body_size 10m` | Request is rejected at LB layer (no upstream forwarding) |
 | Missing distributed env vars for template rendering | Invalid generated `nginx.conf` or bad upstream addresses | Container startup/proxying fails until `.env` variables are corrected |
