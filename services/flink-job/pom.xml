@@ -66,6 +66,12 @@
       <classifier>all</classifier>
     </dependency>
 
+    <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+      <version>1.18.0</version>
+    </dependency>
+
     <!-- Required by clickhouse-jdbc's Apache HTTP provider in Flink runtime -->
     <dependency>
       <groupId>org.apache.httpcomponents.client5</groupId>

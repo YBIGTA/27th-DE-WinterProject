@@ -27,6 +27,15 @@ services:
       - FLINK_KAFKA_GROUP_ID=${FLINK_KAFKA_GROUP_ID:-taxi-realtime-flink}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
+      - FLINK_ENABLE_PREDICTION_SINK=${FLINK_ENABLE_PREDICTION_SINK:-true}
+      - FLINK_CLICKHOUSE_PREDICTION_TABLE=${FLINK_CLICKHOUSE_PREDICTION_TABLE:-taxi_predictions}
+      - FLINK_ONNX_MODEL_PATH=${FLINK_ONNX_MODEL_PATH:-/opt/flink/model/taxi_demand_model.onnx}
+      - FLINK_MODEL_VERSION=${FLINK_MODEL_VERSION:-onnx_v1}
+      - FLINK_MODEL_FEATURE_LAG_STEPS=${FLINK_MODEL_FEATURE_LAG_STEPS:-20}
+      - FLINK_MODEL_HORIZON_STEPS=${FLINK_MODEL_HORIZON_STEPS:-5}
+      - FLINK_MODEL_INTERVAL_MINUTES=${FLINK_MODEL_INTERVAL_MINUTES:-3}
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
 
@@ -47,6 +56,8 @@ services:
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
       - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
 
@@ -67,6 +78,8 @@ services:
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}
       - FLINK_CLICKHOUSE_HOST=${CLICKHOUSE_IP}
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
 
@@ -98,6 +111,15 @@ services:
       - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
+      - FLINK_ENABLE_PREDICTION_SINK=${FLINK_ENABLE_PREDICTION_SINK:-true}
+      - FLINK_CLICKHOUSE_PREDICTION_TABLE=${FLINK_CLICKHOUSE_PREDICTION_TABLE:-taxi_predictions}
+      - FLINK_ONNX_MODEL_PATH=${FLINK_ONNX_MODEL_PATH:-/opt/flink/model/taxi_demand_model.onnx}
+      - FLINK_MODEL_VERSION=${FLINK_MODEL_VERSION:-onnx_v1}
+      - FLINK_MODEL_FEATURE_LAG_STEPS=${FLINK_MODEL_FEATURE_LAG_STEPS:-20}
+      - FLINK_MODEL_HORIZON_STEPS=${FLINK_MODEL_HORIZON_STEPS:-5}
+      - FLINK_MODEL_INTERVAL_MINUTES=${FLINK_MODEL_INTERVAL_MINUTES:-3}
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
 

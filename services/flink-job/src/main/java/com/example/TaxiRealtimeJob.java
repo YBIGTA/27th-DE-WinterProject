@@ -23,17 +23,25 @@ import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
-import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
 
+import ai.onnxruntime.OnnxTensor;
+import ai.onnxruntime.OrtEnvironment;
+import ai.onnxruntime.OrtException;
+import ai.onnxruntime.OrtSession;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class TaxiRealtimeJob {
@@ -85,9 +93,12 @@ public class TaxiRealtimeJob {
         String clickhouseTable = sanitizeIdentifier(jobConfig.clickhouseTable, "taxi_events");
         String insertSql =
                 "INSERT INTO " + clickhouseTable + " (trip_id, ts, zone_id, event) VALUES (?, ?, ?, ?)";
+        String predictionTable = sanitizeIdentifier(jobConfig.clickhousePredictionTable, "taxi_predictions");
+        String predictionInsertSql =
+                "INSERT INTO " + predictionTable + " (prediction_time, target_time, zone_id, predicted_demand, model_version) VALUES (?, ?, ?, ?, ?)";
 
         System.out.printf(
-                "[CONFIG] parallelism=%d, sinkParallelism=%d, topic=%s, groupId=%s, bootstrap=%s, clickhouseUrl=%s, sinkEnabled=%s, outOfOrder=%ss, watermarkIdleness=%ss, idleCleanup=%smin%n",
+                "[CONFIG] parallelism=%d, sinkParallelism=%d, topic=%s, groupId=%s, bootstrap=%s, clickhouseUrl=%s, sinkEnabled=%s, predictionSinkEnabled=%s, modelPath=%s, modelVersion=%s, outOfOrder=%ss, watermarkIdleness=%ss, idleCleanup=%smin%n",
                 jobConfig.parallelism,
                 jobConfig.clickhouseSinkParallelism,
                 jobConfig.kafkaTopic,
@@ -95,6 +106,9 @@ public class TaxiRealtimeJob {
                 bootstrap,
                 chUrl,
                 jobConfig.enableClickhouseSink,
+                jobConfig.enablePredictionSink,
+                jobConfig.onnxModelPath,
+                jobConfig.modelVersion,
                 jobConfig.watermarkOutOfOrdernessSec,
                 jobConfig.watermarkIdlenessSec,
                 jobConfig.idleCleanupMinutes
@@ -172,12 +186,48 @@ public class TaxiRealtimeJob {
             System.out.println("[WARN] ClickHouse sink disabled by FLINK_ENABLE_CLICKHOUSE_SINK=false");
         }
 
-        // --- 트랙 2: 3분 수요 집계 (1분 슬라이딩) ---
-        baseStream.filter(e -> "PICKUP".equals(normType(e.event)))
+        // --- 트랙 2: 3분 수요 집계 ---
+        SingleOutputStreamOperator<DemandRow> demandRows = baseStream.filter(e -> "PICKUP".equals(normType(e.event)))
                 .keyBy(e -> e.zone_id)
-                .window(SlidingEventTimeWindows.of(Time.minutes(3), Time.minutes(1)))
-                .aggregate(new DemandAggregator(), new DemandWindowFn())
-                .print();
+                .window(TumblingEventTimeWindows.of(Time.minutes(3)))
+                .aggregate(new DemandAggregator(), new DemandWindowFn());
+
+        demandRows.print();
+
+        // --- 트랙 3: ONNX 추론 + 예측 적재 ---
+        if (jobConfig.enablePredictionSink) {
+            DataStream<PredictionRow> predictionRows = demandRows
+                    .keyBy(d -> d.zone_id)
+                    .process(new OnnxPredictionProcessFunction(
+                            jobConfig.onnxModelPath,
+                            jobConfig.modelVersion,
+                            jobConfig.modelFeatureLagSteps,
+                            jobConfig.modelHorizonSteps,
+                            jobConfig.modelIntervalMinutes
+                    ));
+
+            predictionRows.addSink(JdbcSink.sink(
+                    predictionInsertSql,
+                    (ps, row) -> {
+                        ps.setTimestamp(1, Timestamp.from(Instant.parse(row.prediction_time)));
+                        ps.setTimestamp(2, Timestamp.from(Instant.parse(row.target_time)));
+                        ps.setInt(3, row.zone_id);
+                        ps.setFloat(4, row.predicted_demand);
+                        ps.setString(5, row.model_version);
+                    },
+                    JdbcExecutionOptions.builder()
+                            .withBatchSize(jobConfig.jdbcBatchSize)
+                            .withBatchIntervalMs(jobConfig.jdbcBatchIntervalMs)
+                            .withMaxRetries(5)
+                            .build(),
+                    new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                            .withUrl(chUrl)
+                            .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
+                            .build()
+            )).setParallelism(jobConfig.clickhouseSinkParallelism);
+        } else {
+            System.out.println("[WARN] Prediction sink disabled by FLINK_ENABLE_PREDICTION_SINK=false");
+        }
 
         env.execute("Taxi Reliable Job (Ordered + Cleanup)");
     }
@@ -334,8 +384,16 @@ public class TaxiRealtimeJob {
 
         String clickhouseDatabase = "default";
         String clickhouseTable = "taxi_events";
+        String clickhousePredictionTable = "taxi_predictions";
 
         boolean enableClickhouseSink = true;
+        boolean enablePredictionSink = true;
+
+        String onnxModelPath = "/opt/flink/model/taxi_demand_model.onnx";
+        String modelVersion = "onnx_v1";
+        int modelFeatureLagSteps = 20;
+        int modelHorizonSteps = 5;
+        int modelIntervalMinutes = 3;
     }
 
     private static JobConfig loadConfigFromEnv() {
@@ -348,6 +406,7 @@ public class TaxiRealtimeJob {
 
         cfg.clickhouseDatabase = getEnvString("FLINK_CLICKHOUSE_DATABASE", cfg.clickhouseDatabase);
         cfg.clickhouseTable = getEnvString("FLINK_CLICKHOUSE_TABLE", cfg.clickhouseTable);
+        cfg.clickhousePredictionTable = getEnvString("FLINK_CLICKHOUSE_PREDICTION_TABLE", cfg.clickhousePredictionTable);
 
         cfg.watermarkOutOfOrdernessSec = getEnvInt("FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC", cfg.watermarkOutOfOrdernessSec);
         cfg.watermarkIdlenessSec = getEnvInt("FLINK_WATERMARK_IDLENESS_SEC", cfg.watermarkIdlenessSec);
@@ -361,6 +420,13 @@ public class TaxiRealtimeJob {
         }
 
         cfg.enableClickhouseSink = getEnvBoolean("FLINK_ENABLE_CLICKHOUSE_SINK", cfg.enableClickhouseSink);
+        cfg.enablePredictionSink = getEnvBoolean("FLINK_ENABLE_PREDICTION_SINK", cfg.enablePredictionSink);
+
+        cfg.onnxModelPath = getEnvString("FLINK_ONNX_MODEL_PATH", cfg.onnxModelPath);
+        cfg.modelVersion = getEnvString("FLINK_MODEL_VERSION", cfg.modelVersion);
+        cfg.modelFeatureLagSteps = getEnvInt("FLINK_MODEL_FEATURE_LAG_STEPS", cfg.modelFeatureLagSteps);
+        cfg.modelHorizonSteps = getEnvInt("FLINK_MODEL_HORIZON_STEPS", cfg.modelHorizonSteps);
+        cfg.modelIntervalMinutes = getEnvInt("FLINK_MODEL_INTERVAL_MINUTES", cfg.modelIntervalMinutes);
         return cfg;
     }
 
@@ -423,6 +489,159 @@ public class TaxiRealtimeJob {
         @Override
         public void process(Integer z, Context c, Iterable<Long> e, Collector<DemandRow> o) {
             o.collect(new DemandRow(z, Instant.ofEpochMilli(c.window().getEnd()).toString(), e.iterator().next()));
+        }
+    }
+
+    public static class PredictionRow {
+        public String prediction_time;
+        public String target_time;
+        public int zone_id;
+        public float predicted_demand;
+        public String model_version;
+
+        public PredictionRow() {}
+
+        public PredictionRow(String predictionTime, String targetTime, int zoneId, float predictedDemand, String modelVersion) {
+            this.prediction_time = predictionTime;
+            this.target_time = targetTime;
+            this.zone_id = zoneId;
+            this.predicted_demand = predictedDemand;
+            this.model_version = modelVersion;
+        }
+    }
+
+    public static class OnnxPredictionProcessFunction extends KeyedProcessFunction<Integer, DemandRow, PredictionRow> {
+        private final String modelPath;
+        private final String modelVersion;
+        private final int featureLagSteps;
+        private final int horizonSteps;
+        private final int intervalMinutes;
+
+        private transient ListState<Long> historyState;
+        private transient OrtEnvironment ortEnv;
+        private transient OrtSession ortSession;
+        private transient String onnxInputName;
+
+        public OnnxPredictionProcessFunction(
+                String modelPath,
+                String modelVersion,
+                int featureLagSteps,
+                int horizonSteps,
+                int intervalMinutes
+        ) {
+            this.modelPath = modelPath;
+            this.modelVersion = modelVersion;
+            this.featureLagSteps = Math.max(1, featureLagSteps);
+            this.horizonSteps = Math.max(1, horizonSteps);
+            this.intervalMinutes = Math.max(1, intervalMinutes);
+        }
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            historyState = getRuntimeContext().getListState(
+                    new ListStateDescriptor<>("zone-demand-history", Long.class)
+            );
+
+            try {
+                ortEnv = OrtEnvironment.getEnvironment();
+                OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
+                ortSession = ortEnv.createSession(modelPath, opts);
+                onnxInputName = ortSession.getInputNames().iterator().next();
+                System.out.printf("[ONNX] model loaded path=%s input=%s%n", modelPath, onnxInputName);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to initialize ONNX session: " + modelPath, e);
+            }
+        }
+
+        @Override
+        public void close() throws Exception {
+            if (ortSession != null) {
+                ortSession.close();
+            }
+        }
+
+        @Override
+        public void processElement(DemandRow value, Context ctx, Collector<PredictionRow> out) throws Exception {
+            if (value == null || value.zone_id <= 0 || value.window_end == null) {
+                return;
+            }
+
+            List<Long> history = new ArrayList<>();
+            for (Long v : historyState.get()) {
+                if (v != null) {
+                    history.add(v);
+                }
+            }
+
+            if (history.size() >= featureLagSteps) {
+                long lagVal = history.get(history.size() - featureLagSteps);
+                PredictionRow row = predict(value, lagVal);
+                if (row != null) {
+                    out.collect(row);
+                }
+            }
+
+            history.add(value.count);
+            int keepN = Math.max(256, featureLagSteps + horizonSteps + 16);
+            if (history.size() > keepN) {
+                history = history.subList(history.size() - keepN, history.size());
+            }
+            historyState.update(history);
+        }
+
+        private PredictionRow predict(DemandRow value, long lag20) throws OrtException {
+            Instant predictionTs = Instant.parse(value.window_end);
+            Instant targetTs = predictionTs.plusSeconds((long) horizonSteps * intervalMinutes * 60L);
+            ZonedDateTime dt = predictionTs.atZone(ZoneOffset.UTC);
+            int hour = dt.getHour();
+            int dayOfWeek = dt.getDayOfWeek().getValue() - 1; // Monday=0 ... Sunday=6
+            int isWeekend = dayOfWeek >= 5 ? 1 : 0;
+
+            float[][] input = new float[][]{
+                    {
+                            (float) value.zone_id,
+                            (float) hour,
+                            (float) dayOfWeek,
+                            (float) isWeekend,
+                            (float) lag20
+                    }
+            };
+
+            try (OnnxTensor tensor = OnnxTensor.createTensor(ortEnv, input);
+                 OrtSession.Result result = ortSession.run(Map.of(onnxInputName, tensor))) {
+                Object raw = result.get(0).getValue();
+                float pred = extractPrediction(raw);
+                if (pred < 0f) {
+                    pred = 0f;
+                }
+                return new PredictionRow(
+                        predictionTs.toString(),
+                        targetTs.toString(),
+                        value.zone_id,
+                        pred,
+                        modelVersion
+                );
+            }
+        }
+
+        private float extractPrediction(Object raw) {
+            if (raw instanceof float[][]) {
+                float[][] a = (float[][]) raw;
+                return (a.length > 0 && a[0].length > 0) ? a[0][0] : 0f;
+            }
+            if (raw instanceof float[]) {
+                float[] a = (float[]) raw;
+                return a.length > 0 ? a[0] : 0f;
+            }
+            if (raw instanceof double[][]) {
+                double[][] a = (double[][]) raw;
+                return (a.length > 0 && a[0].length > 0) ? (float) a[0][0] : 0f;
+            }
+            if (raw instanceof double[]) {
+                double[] a = (double[]) raw;
+                return a.length > 0 ? (float) a[0] : 0f;
+            }
+            throw new IllegalStateException("Unsupported ONNX output type: " + raw.getClass());
         }
     }
 
