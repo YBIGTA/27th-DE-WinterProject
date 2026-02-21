@@ -53,7 +53,7 @@ flowchart TD
   - `Sinks.Many<TaxiEvent>` — the single multicast buffer (capacity from `app.tuning.buffer.size`, code default 30,000; compose profiles currently override to 100,000). Multiple HTTP request threads can emit into it concurrently.
   - `AtomicLong` x5 (`eventsReceived`, `eventsProcessed`, `eventsFailed`, `eventsDropped`, `batchesSent`) — lock-free metric counters.
   - `KafkaSender` — singleton bean with a lazy connection; connects on the first `send()` call. Reactor-level `maxInFlight(1024)` caps the number of `SenderRecord`s in flight at the sender level; this is separate from the Kafka producer's `max.in.flight.requests.per.connection=5` which caps TCP-level requests per broker connection.
-  - `DeadLetterQueue` — file-appending DLQ for events that fail serialization. Writes JSONL to `app.dlq.filepath` (default `dead_letter_queue.jsonl`). Thread-safe via `synchronized`.
+  - `DeadLetterQueue` — file-appending DLQ for events that fail serialization. Writes JSONL to `app.dlq.filepath` (default `dead_letter_queue.jsonl`; compose override: `/app/data/dead_letter_queue-ingestor-{1,2,3}.jsonl`). Thread-safe via `synchronized`.
 - **Sync Primitives:**
   - In-service bounded retry loop for `FAIL_NON_SERIALIZED` — retries up to 10 times with exponential `LockSupport.parkNanos` backoff (50us -> 2ms cap).
   - `AtomicLong` — CAS-based lock-free increment for counters.
@@ -96,6 +96,7 @@ flowchart TD
 - **Output:**
   - Kafka topic `taxi-event-data` — key: `tripId` (String), value: `TaxiEvent` JSON. Partition assignment is determined by key hashing.
   - Dead letter queue file (`app.dlq.filepath`, default `dead_letter_queue.jsonl`) — JSONL format, one line per failed event with fields: `timestamp`, `tripId`, `eventData`, `errorClass`, `errorMessage`, `stackTrace`.
+    - Compose runtime path policy: host `services/ingestor/data` bind-mounted to container `/app/data`, and each replica writes to its own file (`dead_letter_queue-ingestor-1.jsonl`, `-2`, `-3`).
   - HTTP responses: 202 (accepted), 429 (buffer full), 207 (partial batch success), 400 (empty batch), 500 (other failures).
   - `/ingest/batch` response body: `{ acceptedCount, rejectedCount, failedIndices[] }`.
     - **Note:** On overflow mid-batch, `rejectedCount` includes both the failed event and all *unprocessed* events after it, but `failedIndices` only contains indices that were actually attempted. The unprocessed tail is not listed in `failedIndices`.

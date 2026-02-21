@@ -25,9 +25,12 @@ flowchart LR
     A[Generator<br/>C++] -->|HTTP /ingest, /ingest/batch| B[Nginx LB]
     B --> C[Ingestor x3<br/>Spring WebFlux]
     C -->|Kafka Producer| D[(Kafka Topic<br/>taxi-event-data)]
+    T[kafka-topic-init<br/>shape guard] -.-> D
     D --> E[Flink Job<br/>TaxiRealtimeJob]
-    E --> F[(ClickHouse<br/>default.taxi_events)]
-    E --> F2[(ClickHouse<br/>default.taxi_predictions)]
+    E --> F[(ClickHouse Raw<br/>default.taxi_events)]
+    E --> F2[(ClickHouse Raw<br/>default.taxi_predictions)]
+    F --> FS[(ClickHouse Serving<br/>default.taxi_events_latest)]
+    F2 --> F2S[(ClickHouse Serving<br/>default.taxi_predictions_latest)]
     M[(Model Artifact<br/>model/models/taxi_demand_model.onnx)] -.-> E
 
     D -. optional .-> G[Kafka Connect S3 Sink]
@@ -36,7 +39,8 @@ flowchart LR
     D -. metrics .-> I[Kafka Exporter]
     I -.-> J[Prometheus]
     J -.-> K[Grafana]
-    F -. query .-> K
+    FS -. query .-> K
+    F2S -. query .-> K
 ```
 
 ## 4. Component Responsibilities
@@ -45,10 +49,10 @@ flowchart LR
 | Generator | Replays parquet data as HTTP events with batching/retry/rate-limit/circuit-breaker | `services/generator/EXPLANATION.md` |
 | Nginx LB | Distributes ingest traffic to ingestor replicas | `infra/nginx/*` + `docs/runbooks/runtime.md` |
 | Ingestor | Accepts HTTP events and asynchronously forwards to Kafka | `services/ingestor/EXPLANATION.md` |
-| Kafka | Durable event log and fan-out source for stream processors/connectors | `infra/kafka/README.md` |
-| Flink | Streaming compute, raw 이벤트 sink(`taxi_events`), ONNX 기반 예측 sink(`taxi_predictions`) | `infra/flink/Explanation.md` |
+| Kafka | Durable event log and fan-out source for stream processors/connectors + topic shape guardrail(`kafka-topic-init`) | `infra/kafka/README.md` |
+| Flink | Streaming compute, raw sink(`taxi_events`, `taxi_predictions`) + ONNX inference | `infra/flink/Explanation.md` |
 | Model | 3분 집계 기반 수요 예측 모델 학습/ONNX 아티팩트 생성 | `model/EXPLANATION.md` |
-| ClickHouse | Analytical OLAP storage for raw events + prediction results | `infra/clickhouse/EXPLANATION.md` |
+| ClickHouse | Raw tables + dedup serving views(`*_latest`) for operational query consistency | `infra/clickhouse/EXPLANATION.md` |
 | Grafana/Prometheus | Monitoring, dashboarding, and operational visibility | `infra/grafana/README.md` |
 | Kafka Connect (optional) | S3 export branch from Kafka topic | `infra/connectors/EXPLANATION.md` |
 
@@ -74,8 +78,8 @@ Authoritative detail (ownership matrix, invariants, constraints):
 ## 7. Reliability and Failure Handling
 1. Generator: batching, retry, adaptive rate-limiting, circuit breaker, DLQ
 2. Ingestor: reactive buffering, async Kafka publish pipeline, file-based DLQ for serialization failures
-3. Kafka: broker replication/topology by deployment mode
-4. Flink: streaming job recovery behavior and sink retry considerations
+3. Kafka: broker replication/topology + topic shape guardrail (`12/3/min.insync=2`)
+4. Flink/ClickHouse: validation/deserialization/late-drop DLQ(JSONL) + at-least-once raw sink + serving view based dedup read path
 
 Component-level failure modes and mitigations:
 `services/generator/EXPLANATION.md`, `services/ingestor/EXPLANATION.md`, `infra/flink/Explanation.md`, `infra/clickhouse/EXPLANATION.md`

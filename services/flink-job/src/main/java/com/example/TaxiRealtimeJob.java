@@ -28,33 +28,47 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
+import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
+import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.net.InetAddress;
+import java.io.StringWriter;
 
 public class TaxiRealtimeJob {
 
     // 늦게 도착해서 버린 이벤트(관측용)
     private static final OutputTag<TaxiEvent> LATE_EVENTS =
             new OutputTag<TaxiEvent>("late-events") {};
+    private static final String DEFAULT_DLQ_FILEPATH = "/opt/flink/data/dead_letter_queue.jsonl";
+    private static final DeadLetterQueueWriter DLQ_WRITER = new DeadLetterQueueWriter(DEFAULT_DLQ_FILEPATH);
 
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         JobConfig jobConfig = loadConfigFromEnv();
 
-        // ✅ 기본 parallelism=6 (env에 FLINK_PARALLELISM 있으면 덮어씀)
+        // ✅ 기본 parallelism=12 (env에 FLINK_PARALLELISM 있으면 덮어씀)
         env.setParallelism(jobConfig.parallelism);
 
         // ✅ Checkpointing (권장 기본값)
@@ -98,12 +112,13 @@ public class TaxiRealtimeJob {
                 "INSERT INTO " + predictionTable + " (prediction_time, target_time, zone_id, predicted_demand, model_version) VALUES (?, ?, ?, ?, ?)";
 
         System.out.printf(
-                "[CONFIG] parallelism=%d, sinkParallelism=%d, topic=%s, groupId=%s, bootstrap=%s, clickhouseUrl=%s, sinkEnabled=%s, predictionSinkEnabled=%s, modelPath=%s, modelVersion=%s, outOfOrder=%ss, watermarkIdleness=%ss, idleCleanup=%smin%n",
+                "[CONFIG] parallelism=%d, sinkParallelism=%d, topic=%s, groupId=%s, bootstrap=%s, startOffsets=%s, clickhouseUrl=%s, sinkEnabled=%s, predictionSinkEnabled=%s, modelPath=%s, modelVersion=%s, outOfOrder=%ss, watermarkIdleness=%ss, demandWindow=%smin, idleCleanup=%smin%n",
                 jobConfig.parallelism,
                 jobConfig.clickhouseSinkParallelism,
                 jobConfig.kafkaTopic,
                 jobConfig.kafkaGroupId,
                 bootstrap,
+                jobConfig.kafkaStartOffsets,
                 chUrl,
                 jobConfig.enableClickhouseSink,
                 jobConfig.enablePredictionSink,
@@ -111,6 +126,7 @@ public class TaxiRealtimeJob {
                 jobConfig.modelVersion,
                 jobConfig.watermarkOutOfOrdernessSec,
                 jobConfig.watermarkIdlenessSec,
+                jobConfig.windowDemandMinutes,
                 jobConfig.idleCleanupMinutes
         );
 
@@ -128,16 +144,13 @@ public class TaxiRealtimeJob {
                 .setBootstrapServers(bootstrap)
                 .setTopics(jobConfig.kafkaTopic)
                 .setGroupId(jobConfig.kafkaGroupId)
-                .setStartingOffsets(OffsetsInitializer.earliest())
+                .setStartingOffsets(buildOffsetsInitializer(jobConfig.kafkaStartOffsets))
                 .setValueOnlyDeserializer(safeSchema)
                 .build();
 
         // 3) 원본 스트림 (ts 파싱 검증 포함)
         DataStream<TaxiEvent> rawStream = env.fromSource(source, watermarkStrategy, "kafka-source")
-                .filter(e -> {
-                    if (e == null || e.ts == null || e.trip_id == null) return false;
-                    try { Instant.parse(e.ts); return true; } catch (Exception ex) { return false; }
-                });
+                .filter(TaxiRealtimeJob::validateRawEventOrDlq);
 
         // ✅ 4) trip_id 단위 순서성 보장: 버퍼링+재정렬(event-time) + idle cleanup(processing-time)
         long idleTimeoutMs = Math.max(1, jobConfig.idleCleanupMinutes) * 60_000L;
@@ -186,10 +199,10 @@ public class TaxiRealtimeJob {
             System.out.println("[WARN] ClickHouse sink disabled by FLINK_ENABLE_CLICKHOUSE_SINK=false");
         }
 
-        // --- 트랙 2: 3분 수요 집계 ---
+        // --- 트랙 2: 수요 집계 (분 단위 윈도우) ---
         SingleOutputStreamOperator<DemandRow> demandRows = baseStream.filter(e -> "PICKUP".equals(normType(e.event)))
                 .keyBy(e -> e.zone_id)
-                .window(TumblingEventTimeWindows.of(Time.minutes(3)))
+                .window(TumblingEventTimeWindows.of(Time.minutes(jobConfig.windowDemandMinutes)))
                 .aggregate(new DemandAggregator(), new DemandWindowFn());
 
         demandRows.print();
@@ -275,6 +288,15 @@ public class TaxiRealtimeJob {
         public void processElement(TaxiEvent e, Context ctx, Collector<TaxiEvent> out) throws Exception {
             long eventTs = parseTsOrMin(e);
             if (eventTs == Long.MIN_VALUE) {
+                writeDlq(
+                        "LATE_DROPPED",
+                        "INVALID_EVENT_TS",
+                        "per_trip_reorder",
+                        e,
+                        null,
+                        null,
+                        "parseTsOrMin failed in reorder stage"
+                );
                 ctx.output(lateTag, e);
                 return;
             }
@@ -283,6 +305,15 @@ public class TaxiRealtimeJob {
 
             // watermark보다 과거면 이미 late → drop
             if (wm != Long.MIN_VALUE && eventTs <= wm) {
+                writeDlq(
+                        "LATE_DROPPED",
+                        "WATERMARK_LATE",
+                        "per_trip_reorder",
+                        e,
+                        null,
+                        null,
+                        "eventTs(" + eventTs + ") <= watermark(" + wm + ")"
+                );
                 ctx.output(lateTag, e);
                 return;
             }
@@ -344,6 +375,15 @@ public class TaxiRealtimeJob {
 
                 if (ts <= wm) {
                     if (ts < lastTs) {
+                        writeDlq(
+                                "LATE_DROPPED",
+                                "REORDER_LATE",
+                                "per_trip_reorder",
+                                e,
+                                null,
+                                null,
+                                "eventTs(" + ts + ") < lastEmittedTs(" + lastTs + ")"
+                        );
                         ctx.output(lateTag, e);
                     } else {
                         out.collect(e);
@@ -365,6 +405,218 @@ public class TaxiRealtimeJob {
         catch (Exception e) { return Long.MIN_VALUE; }
     }
 
+    private static boolean validateRawEventOrDlq(TaxiEvent e) {
+        if (e == null) {
+            // Deserializer stage already records null-producing failures with raw payload context.
+            return false;
+        }
+        if (e.trip_id == null) {
+            writeDlq(
+                    "VALIDATION_FAILED",
+                    "MISSING_TRIP_ID",
+                    "raw_filter",
+                    e,
+                    null,
+                    null,
+                    "trip_id is required"
+            );
+            return false;
+        }
+        if (e.ts == null) {
+            writeDlq(
+                    "VALIDATION_FAILED",
+                    "MISSING_TS",
+                    "raw_filter",
+                    e,
+                    null,
+                    null,
+                    "ts is required"
+            );
+            return false;
+        }
+        try {
+            Instant.parse(e.ts);
+            return true;
+        } catch (Exception ex) {
+            writeDlq(
+                    "VALIDATION_FAILED",
+                    "INVALID_TS",
+                    "raw_filter",
+                    e,
+                    null,
+                    ex,
+                    "Instant.parse(ts) failed"
+            );
+            return false;
+        }
+    }
+
+    private static void writeDlq(
+            String category,
+            String reason,
+            String stage,
+            TaxiEvent event,
+            byte[] rawMessage,
+            Throwable error,
+            String detail
+    ) {
+        DLQ_WRITER.write(category, reason, stage, event, rawMessage, error, detail);
+    }
+
+    private static class DeadLetterQueueWriter {
+        private static final int RAW_MESSAGE_LIMIT = 2000;
+        private static final long SAMPLE_LOG_EVERY = 10000L;
+        private static final String FALLBACK_DLQ_FILEPATH = "/tmp/dead_letter_queue.jsonl";
+
+        private final ObjectMapper mapper = new ObjectMapper();
+        private final String hostname = detectHostname();
+        private Path filePath;
+        private final AtomicLong totalWritten = new AtomicLong(0);
+        private final AtomicBoolean initialized = new AtomicBoolean(false);
+        private BufferedWriter writer;
+
+        DeadLetterQueueWriter(String configuredPath) {
+            Path primary = withHostnameSuffix(Paths.get(configuredPath), hostname);
+            if (!initWriter(primary)) {
+                Path fallback = withHostnameSuffix(Paths.get(FALLBACK_DLQ_FILEPATH), hostname);
+                if (!initWriter(fallback)) {
+                    System.err.printf(
+                            "[DLQ] Disabled. Failed to initialize both primary=%s and fallback=%s%n",
+                            primary, fallback
+                    );
+                }
+            }
+        }
+
+        private boolean initWriter(Path candidate) {
+            try {
+                Path parent = candidate.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+                writer = Files.newBufferedWriter(
+                        candidate,
+                        StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.WRITE,
+                        StandardOpenOption.APPEND
+                );
+                filePath = candidate;
+                initialized.set(true);
+                System.out.printf("[DLQ] Flink DLQ initialized: path=%s%n", filePath);
+                Runtime.getRuntime().addShutdownHook(new Thread(this::closeQuietly, "flink-dlq-close"));
+                return true;
+            } catch (Exception e) {
+                System.err.printf("[DLQ] Failed to initialize Flink DLQ path=%s: %s%n", candidate, e.getMessage());
+                return false;
+            }
+        }
+
+        synchronized void write(
+                String category,
+                String reason,
+                String stage,
+                TaxiEvent event,
+                byte[] rawMessage,
+                Throwable error,
+                String detail
+        ) {
+            if (!initialized.get() || writer == null) {
+                return;
+            }
+            try {
+                LinkedHashMap<String, Object> line = new LinkedHashMap<>();
+                line.put("timestamp", Instant.now().toString());
+                line.put("category", category);
+                line.put("reason", reason);
+                line.put("stage", stage);
+                line.put("hostname", hostname);
+                line.put("tripId", event != null ? event.trip_id : null);
+                line.put("eventTs", event != null ? event.ts : null);
+                line.put("eventType", event != null ? event.event : null);
+                line.put("zoneId", event != null ? event.zone_id : null);
+                line.put("eventData", event);
+                if (rawMessage != null && rawMessage.length > 0) {
+                    line.put("rawMessage", truncate(new String(rawMessage, StandardCharsets.UTF_8), RAW_MESSAGE_LIMIT));
+                    line.put("rawMessageSize", rawMessage.length);
+                }
+                if (detail != null && !detail.isBlank()) {
+                    line.put("detail", detail);
+                }
+                if (error != null) {
+                    line.put("errorClass", error.getClass().getSimpleName());
+                    line.put("errorMessage", error.getMessage() != null ? error.getMessage() : "");
+                    line.put("stackTrace", stackTraceOf(error));
+                }
+
+                writer.write(mapper.writeValueAsString(line));
+                writer.newLine();
+                writer.flush();
+
+                long count = totalWritten.incrementAndGet();
+                if (count <= 5 || count % SAMPLE_LOG_EVERY == 0) {
+                    System.err.printf(
+                            "[DLQ] wrote #%d category=%s reason=%s stage=%s%n",
+                            count, category, reason, stage
+                    );
+                }
+            } catch (Exception e) {
+                System.err.printf(
+                        "[DLQ] Failed to write line category=%s reason=%s stage=%s: %s%n",
+                        category, reason, stage, e.getMessage()
+                );
+            }
+        }
+
+        private synchronized void closeQuietly() {
+            if (writer == null) {
+                return;
+            }
+            try {
+                writer.close();
+                System.out.printf("[DLQ] Flink DLQ closed: path=%s total_written=%d%n", filePath, totalWritten.get());
+            } catch (Exception e) {
+                System.err.printf("[DLQ] Failed to close Flink DLQ path=%s: %s%n", filePath, e.getMessage());
+            } finally {
+                writer = null;
+            }
+        }
+
+        private static String stackTraceOf(Throwable error) {
+            StringWriter sw = new StringWriter();
+            error.printStackTrace(new PrintWriter(sw));
+            return sw.toString();
+        }
+
+        private static String detectHostname() {
+            try {
+                String raw = InetAddress.getLocalHost().getHostName();
+                if (raw == null || raw.isBlank()) {
+                    return "unknown-host";
+                }
+                return raw.replaceAll("[^A-Za-z0-9._-]", "_");
+            } catch (Exception e) {
+                return "unknown-host";
+            }
+        }
+
+        private static Path withHostnameSuffix(Path original, String hostname) {
+            String name = original.getFileName().toString();
+            int idx = name.lastIndexOf('.');
+            String resolvedName = idx > 0
+                    ? name.substring(0, idx) + "-" + hostname + name.substring(idx)
+                    : name + "-" + hostname;
+            Path parent = original.getParent();
+            return parent == null ? Paths.get(resolvedName) : parent.resolve(resolvedName);
+        }
+
+        private static String truncate(String value, int max) {
+            if (value == null) return null;
+            if (value.length() <= max) return value;
+            return value.substring(0, max);
+        }
+    }
+
     // ---------------------------
     // Config / Utils
     // ---------------------------
@@ -373,6 +625,7 @@ public class TaxiRealtimeJob {
         int parallelism = 12;
         int watermarkOutOfOrdernessSec = 5;
         int watermarkIdlenessSec = 30;
+        int windowDemandMinutes = 3;
         int idleCleanupMinutes = 20;
 
         int jdbcBatchSize = 50000;
@@ -381,6 +634,7 @@ public class TaxiRealtimeJob {
 
         String kafkaTopic = "taxi-event-data";
         String kafkaGroupId = "taxi-realtime-flink";
+        String kafkaStartOffsets = "committed";
 
         String clickhouseDatabase = "default";
         String clickhouseTable = "taxi_events";
@@ -403,6 +657,7 @@ public class TaxiRealtimeJob {
         cfg.parallelism = getEnvInt("FLINK_PARALLELISM", cfg.parallelism);
         cfg.kafkaTopic = getEnvString("FLINK_KAFKA_TOPIC", cfg.kafkaTopic);
         cfg.kafkaGroupId = getEnvString("FLINK_KAFKA_GROUP_ID", cfg.kafkaGroupId);
+        cfg.kafkaStartOffsets = getEnvString("FLINK_KAFKA_START_OFFSETS", cfg.kafkaStartOffsets);
 
         cfg.clickhouseDatabase = getEnvString("FLINK_CLICKHOUSE_DATABASE", cfg.clickhouseDatabase);
         cfg.clickhouseTable = getEnvString("FLINK_CLICKHOUSE_TABLE", cfg.clickhouseTable);
@@ -410,6 +665,7 @@ public class TaxiRealtimeJob {
 
         cfg.watermarkOutOfOrdernessSec = getEnvInt("FLINK_WATERMARK_OUT_OF_ORDERNESS_SEC", cfg.watermarkOutOfOrdernessSec);
         cfg.watermarkIdlenessSec = getEnvInt("FLINK_WATERMARK_IDLENESS_SEC", cfg.watermarkIdlenessSec);
+        cfg.windowDemandMinutes = Math.max(1, getEnvInt("FLINK_WINDOW_DEMAND_MINUTES", cfg.windowDemandMinutes));
         cfg.idleCleanupMinutes = getEnvInt("FLINK_IDLE_CLEANUP_MINUTES", cfg.idleCleanupMinutes);
 
         cfg.jdbcBatchSize = getEnvInt("FLINK_JDBC_BATCH_SIZE", cfg.jdbcBatchSize);
@@ -428,6 +684,25 @@ public class TaxiRealtimeJob {
         cfg.modelHorizonSteps = getEnvInt("FLINK_MODEL_HORIZON_STEPS", cfg.modelHorizonSteps);
         cfg.modelIntervalMinutes = getEnvInt("FLINK_MODEL_INTERVAL_MINUTES", cfg.modelIntervalMinutes);
         return cfg;
+    }
+
+    private static OffsetsInitializer buildOffsetsInitializer(String modeRaw) {
+        String mode = (modeRaw == null ? "" : modeRaw.trim().toLowerCase());
+        switch (mode) {
+            case "latest":
+                return OffsetsInitializer.latest();
+            case "earliest":
+                return OffsetsInitializer.earliest();
+            case "committed":
+                // Use committed offsets when available, otherwise bootstrap from earliest.
+                return OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST);
+            default:
+                System.out.printf(
+                        "[WARN] Unknown FLINK_KAFKA_START_OFFSETS=%s, fallback=committed%n",
+                        modeRaw
+                );
+                return OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST);
+        }
     }
 
     private static int getEnvInt(String key, int def) {
@@ -664,7 +939,18 @@ public class TaxiRealtimeJob {
 
         @Override
         public TaxiEvent deserialize(byte[] message) throws IOException {
-            if (message == null || message.length == 0) return null;
+            if (message == null || message.length == 0) {
+                writeDlq(
+                        "DESERIALIZATION_FAILED",
+                        "EMPTY_MESSAGE",
+                        "safe_deserializer",
+                        null,
+                        message,
+                        null,
+                        "Kafka value was null or empty"
+                );
+                return null;
+            }
             try {
                 return objectMapper.readValue(message, TaxiEvent.class);
             } catch (Exception e) {
@@ -673,6 +959,15 @@ public class TaxiRealtimeJob {
                     String sample = new String(message, 0, Math.min(message.length, 200));
                     System.err.printf("[DESER_ERROR] #%d: %s | sample: %s%n", count, e.getMessage(), sample);
                 }
+                writeDlq(
+                        "DESERIALIZATION_FAILED",
+                        "JSON_PARSE_ERROR",
+                        "safe_deserializer",
+                        null,
+                        message,
+                        e,
+                        "ObjectMapper.readValue failed"
+                );
                 return null;
             }
         }

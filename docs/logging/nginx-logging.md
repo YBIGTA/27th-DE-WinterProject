@@ -27,7 +27,7 @@
 
 ### 3.1 주기별 upstream 분배량
 목적:
-- `least_conn` 분산이 실제로 어느 upstream으로 얼마나 갔는지 확인
+- `random two least_conn` 분산이 실제로 어느 upstream으로 얼마나 갔는지 확인
 - 특정 인스턴스 편향/고립 조기 감지
 
 현재 access log에서 활용 가능한 필드:
@@ -96,7 +96,7 @@
 - `retry_invoked_count` (다중 `upstream_status` 라인 수 기반)
 - `retry_success_count` (초기 실패 후 최종 2xx)
 - `retry_exhausted_count` (재시도 후도 최종 실패)
-- `peer_marked_failed_events` (`max_fails/fail_timeout` 관련 error 로그 패턴 기반)
+- `retry_target_switch_count` (재시도 시 `upstream_addr`가 변경된 요청 수)
 
 메모:
 - 요청 단위 다중 시도를 보려면 `upstream_status`/`upstream_addr`의 콤마 포함 라인을 분석한다.

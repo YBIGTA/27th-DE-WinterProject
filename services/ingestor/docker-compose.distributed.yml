@@ -8,11 +8,14 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}"
       SERVER_PORT: "${INGESTOR_PORT:-8080}"
       APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_DLQ_FILEPATH: "/app/data/dead_letter_queue-ingestor-1.jsonl"
       APP_TUNING_BUFFER_SIZE: 100000
       APP_TUNING_BATCH_SIZE: 1000
       APP_TUNING_BATCH_TIMEOUT_MS: 10
       APP_TUNING_KAFKA_SEND_CONCURRENCY: 12
       APP_TUNING_METRICS_INTERVAL_SEC: 10
+    volumes:
+      - ./data:/app/data
     ports:
       - "${INGESTOR_1_PORT:-8081}:${INGESTOR_PORT:-8080}"
     networks:
@@ -36,11 +39,14 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}"
       SERVER_PORT: "${INGESTOR_PORT:-8080}"
       APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_DLQ_FILEPATH: "/app/data/dead_letter_queue-ingestor-2.jsonl"
       APP_TUNING_BUFFER_SIZE: 100000
       APP_TUNING_BATCH_SIZE: 1000
       APP_TUNING_BATCH_TIMEOUT_MS: 10
       APP_TUNING_KAFKA_SEND_CONCURRENCY: 12
       APP_TUNING_METRICS_INTERVAL_SEC: 10
+    volumes:
+      - ./data:/app/data
     ports:
       - "${INGESTOR_2_PORT:-8082}:${INGESTOR_PORT:-8080}"
     networks:
@@ -64,11 +70,14 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}"
       SERVER_PORT: "${INGESTOR_PORT:-8080}"
       APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_DLQ_FILEPATH: "/app/data/dead_letter_queue-ingestor-3.jsonl"
       APP_TUNING_BUFFER_SIZE: 100000
       APP_TUNING_BATCH_SIZE: 1000
       APP_TUNING_BATCH_TIMEOUT_MS: 10
       APP_TUNING_KAFKA_SEND_CONCURRENCY: 12
       APP_TUNING_METRICS_INTERVAL_SEC: 10
+    volumes:
+      - ./data:/app/data
     ports:
       - "${INGESTOR_3_PORT:-8083}:${INGESTOR_PORT:-8080}"
     networks:

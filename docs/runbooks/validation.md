@@ -49,16 +49,24 @@ Expected:
 Run on a machine where `kafka-1` container exists.
 
 ```bash
+# enforce topic shape (single-machine)
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-topic-init
+
 # list topics
 docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --list
 
 # topic detail
 docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --describe --topic taxi-event-data
+
+# topic config
+docker exec kafka-1 kafka-configs --bootstrap-server localhost:9092 --entity-type topics --entity-name taxi-event-data --describe
 ```
 
 Expected:
 1. `taxi-event-data` exists.
-2. Topic describe returns partition metadata without errors.
+2. `PartitionCount: 12` and `ReplicationFactor: 3`.
+3. topic config에 `min.insync.replicas=2`가 포함되어야 함.
+4. `docker logs kafka-topic-init`에 `Topic shape verified` 로그가 있어야 함.
 
 ## 3) Ingest path checks (before generator)
 This sends one test event through `nginx -> ingestor -> kafka`.
@@ -96,12 +104,38 @@ docker exec clickhouse clickhouse-client -q "SELECT trip_id, ts, zone_id, event 
 # prediction count / latest predictions
 docker exec clickhouse clickhouse-client -q "SELECT count() FROM default.taxi_predictions"
 docker exec clickhouse clickhouse-client -q "SELECT prediction_time, target_time, zone_id, predicted_demand, model_version FROM default.taxi_predictions ORDER BY prediction_time DESC LIMIT 10"
+
+# dedup serving view count
+docker exec clickhouse clickhouse-client -q "SELECT count() FROM default.taxi_events_latest"
+docker exec clickhouse clickhouse-client -q "SELECT count() FROM default.taxi_predictions_latest"
+
+# duplicate suspicion check (events)
+docker exec clickhouse clickhouse-client -q "
+SELECT count() AS dup_groups
+FROM (
+  SELECT trip_id, ts, zone_id, event, count() AS c
+  FROM default.taxi_events
+  GROUP BY trip_id, ts, zone_id, event
+  HAVING c > 1
+)"
+
+# dedup view should be stable (event key duplicate group should be 0)
+docker exec clickhouse clickhouse-client -q "
+SELECT count() AS dup_groups_latest
+FROM (
+  SELECT trip_id, ts, zone_id, event, count() AS c
+  FROM default.taxi_events_latest
+  GROUP BY trip_id, ts, zone_id, event
+  HAVING c > 1
+)"
 ```
 
 Expected:
 1. Snapshot 2 count is greater than snapshot 1.
 2. Recent rows are populated while generator runs.
 3. `taxi_predictions`는 초기 warm-up 구간 이후 증가한다.
+4. `dup_groups`가 지속적으로 증가하면 sink 중복 가능성을 점검한다.
+5. `dup_groups_latest=0`이면 serving 레이어 dedup 조회는 정상이다.
 
 참고:
 - 기본 `FLINK_MODEL_FEATURE_LAG_STEPS=20`, `FLINK_MODEL_INTERVAL_MINUTES=3`이므로 zone별 첫 예측까지 약 60분의 히스토리가 필요할 수 있습니다.
@@ -120,6 +154,7 @@ docker logs --tail 100 flink-jobmanager
 Expected:
 1. No continuous connector/bootstrap failure loops.
 2. No persistent ClickHouse JDBC sink failures.
+3. 시작 offset 정책(`FLINK_KAFKA_START_OFFSETS`)이 의도와 일치하는지 JobManager 로그의 `[CONFIG] startOffsets` 값을 확인한다.
 
 ## 6) Grafana checks
 Verify Grafana is running and datasources are connected.
@@ -161,7 +196,14 @@ Navigate to Dashboards > NYC Taxi Events. Panels should populate once data flows
 docker network ls | rg kafka-network
 ```
 
-4. If Flink cannot consume Kafka in distributed mode, first verify `KAFKA_*_IP` values in `config/.env` are real reachable host IPs (not loopback).
+4. If Flink cannot consume Kafka in distributed mode, first check JobManager `[CONFIG] bootstrap=...` value.  
+   Real distributed 기본은 `${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT}`이며, one-host fallback에서는 `FLINK_IP=flink-jobmanager` 오버라이드를 적용한다.
+5. Distributed에서는 machine A에서 아래 명령으로 토픽 shape guardrail을 적용한다.
+
+```bash
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-topic-init
+docker logs --tail 50 kafka-topic-init
+```
 
 ## 8) Quick failure triage
 1. `curl /health` fails:

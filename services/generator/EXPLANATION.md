@@ -426,7 +426,7 @@ Sends JSON array of 1-200 events to `/ingest/batch`:
 | **Slow ingestor (latency spike)** | Payload queue fills (4096 capacity) | BoundedQueue blocks scheduler, slows event generation | Backpressure propagates upstream naturally |
 | **Persistent server error (503)** | HTTP 503 status code | Requeue up to 3 times, then DLQ | Manual intervention (restart ingestor, replay DLQ) |
 | **Client error (400/404)** | HTTP 4xx status code | Drop event (log warning), no retry | Manual investigation (fix data/URL) |
-| **Requeue overflow** | `requeue.push()` returns false | Write to dead_letter_queue.jsonl | Manual replay from DLQ file |
+| **Requeue overflow** | `requeue.push()` returns false | Write to `data/dead_letter_queue-generator.jsonl` | Manual replay from DLQ file |
 | **Socket error (EPIPE)** | `send_all()` returns false | Immediate connection reset, requeue event | Retry on new connection |
 | **Invalid Parquet file** | Arrow read error | Log error, skip file, continue with next | Manual fix (reprocess data) |
 | **Out of memory** | `std::bad_alloc` exception | Crash (no recovery) | Reduce date range, split into smaller batches |
@@ -448,7 +448,7 @@ Notes:
 | `circuit_breaker_timeout_sec` | 30 | 5 - 300 | Time in OPEN before testing recovery |
 | `connection_max_failures` | 3 | 1 - 10 | Lower = more aggressive connection resets |
 | `max_retries` | 3 | 0 - 10 | Parsed and stored, but retry loop currently uses fixed `PayloadWithRetry::MAX_RETRIES=3` |
-| `dlq_filepath` | dead_letter_queue.jsonl | - | Where failed events are written |
+| `dlq_filepath` | data/dead_letter_queue-generator.jsonl | - | Where failed events are written |
 | `batch_size` | 200 | 1 - 1000 | Higher = better throughput, more latency; 1 = disable batching |
 | `batch_timeout_ms` | 100 | 10 - 5000 | Higher = better batching efficiency, more latency |
 
@@ -543,8 +543,8 @@ docker compose down  # Kill ingestor after 10s
 # Test 4: DLQ
 # Start ingestor, stop after 5s
 ./build/generate
-# Expected: dead_letter_queue.jsonl created
-cat dead_letter_queue.jsonl | wc -l  # Count failed events
+# Expected: data/dead_letter_queue-generator.jsonl created
+cat data/dead_letter_queue-generator.jsonl | wc -l  # Count failed events
 ```
 
 ### Load Tests
@@ -635,7 +635,7 @@ cmake --build build
 3. **HTTP/2 multiplexing:** Use single connection per ingestor instance
 4. **Persistent buffer:** Disk-backed queue (Chronicle Queue, RocksDB)
 5. **Distributed mode:** Multiple generator instances with partition coordination
-6. **Replay from DLQ:** Tool to read dead_letter_queue.jsonl and re-send
+6. **Replay from DLQ:** Tool to read `data/dead_letter_queue-generator.jsonl` and re-send
 7. **Exactly-once semantics:** Kafka-style producer IDs and sequence numbers
 8. **Schema validation:** Validate JSON against schema before sending
 9. **Compression:** gzip/snappy compression for HTTP bodies

@@ -2,6 +2,16 @@
 
 이 문서는 현재 저장소의 실운영 실행 절차를 싱글 머신/멀티 머신 기준으로 통합 정리한 문서입니다.
 
+## 0. 실행 모드 3가지 빠른 선택
+
+아래 3가지 중 하나를 선택해서 실행하면 됩니다.
+
+| 모드 | 목적 | 실행 기준 | 핵심 포인트 |
+|---|---|---|---|
+| Vanilla Single-machine | 로컬 개발/기본 E2E 검증 | `## 4` 절차 사용 | `config/.env.single-machine` 기반으로 `config/.env` 구성 후 single compose 실행 |
+| Vanilla Distributed (Multi-machine) | 실제 분산 배포/운영 | `## 5` 절차 사용 | 모든 머신이 동일한 `config/.env` 사용, 각 머신은 자기 역할 서비스만 실행 |
+| Distributed 설정을 Single-machine에서 테스트 (One-host fallback) | 분산 compose/설정 검증을 한 대에서 빠르게 재현 | `## 5.6` 절차 사용 | `FLINK_IP=flink-jobmanager` 오버라이드 + 나머지 `*_IP`를 단일 host-reachable IP로 통일 |
+
 ## 1. 범위
 
 - Kafka: `infra/kafka/docker-compose*.yml`
@@ -123,6 +133,7 @@ KAFKA_UI_PORT=8090
 
 ```bash
 docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-topic-init
 ```
 
 검증:
@@ -130,12 +141,14 @@ docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d
 ```bash
 docker compose -f infra/kafka/docker-compose.yml --env-file config/.env ps
 docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --list
+docker logs --tail 50 kafka-topic-init
 ```
 
 ## 4.2 ClickHouse
 
 ```bash
 docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d clickhouse-schema-sync
 curl -s http://localhost:8123/ping
 # expected: Ok
 ```
@@ -213,6 +226,9 @@ C1=$(docker exec clickhouse clickhouse-client --query "SELECT count() FROM defau
 sleep 5
 C2=$(docker exec clickhouse clickhouse-client --query "SELECT count() FROM default.taxi_events")
 echo "rate_per_sec=$(( (C2-C1)/5 ))"
+
+# dedup serving view 확인
+docker exec clickhouse clickhouse-client --query "SELECT count() FROM default.taxi_events_latest"
 ```
 
 ## 4.8 Monitoring Stack (선택)
@@ -260,11 +276,25 @@ docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.
 docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-3 kafka-ui
 ```
 
+토픽 shape 가드레일(필수):
+```bash
+# run on machine A (kafka-1 host)
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-topic-init
+docker logs --tail 100 kafka-topic-init
+docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --describe --topic taxi-event-data
+docker exec kafka-1 kafka-configs --bootstrap-server localhost:9092 --entity-type topics --entity-name taxi-event-data --describe
+```
+
+검증 기준:
+1. `PartitionCount: 12`
+2. `ReplicationFactor: 3`
+3. `min.insync.replicas=2`
+
 ## 5.2 ClickHouse
 
 ```bash
 # machine D
-docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse clickhouse-schema-sync
 ```
 
 ## 5.3 Ingestor + Nginx
@@ -282,6 +312,8 @@ docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.
 cd services/flink-job && mvn clean package && cd ../..
 docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager flink-taskmanager-1 flink-taskmanager-2 flink-taskmanager-3
 ```
+현재 distributed 기본값은 `parallelism=12`, `3 x 4 slots = total 12 slots`입니다.
+기본 offset 시작 정책은 `FLINK_KAFKA_START_OFFSETS=committed` 입니다.
 
 ## 5.5 Generator
 
@@ -291,13 +323,59 @@ cd services/generator
 ./build/generate
 ```
 
+## 5.6 Distributed 설정을 Single-machine에서 테스트 (One-host fallback)
+
+목적:
+- real multi-machine 배포 전에 distributed compose/환경값을 한 대에서 빠르게 검증
+
+환경 준비:
+```bash
+# 권장: 준비된 one-host 테스트 env 사용
+cp config/.env.one-host-test config/.env
+
+# 대안: distributed env를 복사해 수동 오버라이드
+# 1) 모든 *_IP를 host-reachable 단일 IP로 통일
+# 2) FLINK_IP=flink-jobmanager
+```
+
+실행 순서(한 머신에서 모두 실행):
+```bash
+# 1) Kafka cluster + topic guardrail
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3 kafka-ui
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-topic-init
+
+# 2) ClickHouse
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse clickhouse-schema-sync
+
+# 3) Ingestor + Nginx
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up -d --build ingestor-1 ingestor-2 ingestor-3
+docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up -d nginx-lb
+
+# 4) Flink
+cd services/flink-job && mvn clean package && cd ../..
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager flink-taskmanager-1 flink-taskmanager-2 flink-taskmanager-3
+
+# 5) Generator (native)
+cd services/generator
+./build/generate config/default.yaml
+```
+
+최소 검증 포인트:
+1. Kafka 토픽 shape: `PartitionCount=12`, `ReplicationFactor=3`, `min.insync.replicas=2`
+2. Flink Job이 `RUNNING` 상태이며 restart loop가 없어야 함
+3. ClickHouse `default.taxi_events` row count가 시간 경과에 따라 증가해야 함
+
+주의:
+1. one-host fallback은 distributed "설정 검증" 용도이며, real multi-machine 네트워크 검증을 대체하지 않습니다.
+2. real distributed 운영 전환 시 `config/.env`를 실제 머신 IP 기준으로 되돌리고 `FLINK_IP`도 실제 JobManager host IP로 복원해야 합니다.
+
 ## 6. 유의사항 (중요)
 
 1. `config/.env`를 git에 커밋하지 않습니다.
 2. 분산 모드에서 방화벽/보안그룹에 아래 포트를 반드시 오픈합니다.
 3. Kafka는 브로커별 external/internal/controller 포트가 모두 필요합니다.
 4. 분산 Nginx는 템플릿 기반(`envsubst`)이므로 `INGESTOR_*_IP/PORT` 누락 시 기동 실패합니다.
-5. Flink 이미지는 JAR를 자동 빌드하지 않습니다. `mvn package` 후 실행해야 합니다.
+5. Flink 이미지는 Docker build 단계에서 JAR를 소스에서 빌드합니다. 로컬 `mvn package`는 사전 검증 용도입니다.
 6. Generator는 compose 서비스가 아니라 native binary입니다.
 7. `kafka-network`는 단일 머신 기준으로는 compose가 생성/재사용합니다. 구성 손상 시 `docker network ls | rg kafka-network`로 확인합니다.
 
@@ -417,5 +495,5 @@ curl -X POST -H "Content-Type: application/json" \
 2. `config/.env` with non-network keys breaks source-of-truth policy.
 3. `kafka-network` missing on non-kafka machines breaks ClickHouse/Flink startup.
 4. Flink TaskManager machine without local `flink-taxi-job:latest` image fails to start.
-5. Single-machine Flink compose uses internal Docker DNS (`kafka-*`, `clickhouse`); only distributed mode should use real reachable host IPs in `config/.env`.
-6. 현재 `infra/flink/docker-compose.distributed.yml` 기준 `flink-taskmanager-3`에는 `/opt/flink/model` 마운트가 없어 ONNX 예측 오퍼레이터가 해당 TM에 스케줄되면 실패할 수 있습니다.
+5. Flink distributed 기본값은 real multi-host 기준(`KAFKA_*_IP`, `CLICKHOUSE_IP`, `FLINK_IP`)이다. one-host distributed fallback 검증 시에만 `FLINK_IP=flink-jobmanager` 오버라이드를 사용한다.
+6. Flink 슬롯 합계/병렬도와 Kafka 토픽 파티션 수가 불균형하면 consumer lag이 누적될 수 있습니다.

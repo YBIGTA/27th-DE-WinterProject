@@ -28,7 +28,7 @@ retry:
   max_retries: 3
 
 dlq:
-  filepath: "dead_letter_queue.jsonl"
+  filepath: "data/dead_letter_queue-generator.jsonl"
 
 batch:
   size: 200

@@ -10,12 +10,15 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}"
       SERVER_PORT: "${INGESTOR_PORT:-8080}"
       APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_DLQ_FILEPATH: "/app/data/dead_letter_queue-ingestor-1.jsonl"
       APP_TUNING_BUFFER_SIZE: 100000
       APP_TUNING_BATCH_SIZE: 2000
       APP_TUNING_BATCH_TIMEOUT_MS: 20
       APP_TUNING_KAFKA_SEND_CONCURRENCY: 12
 
       APP_TUNING_METRICS_INTERVAL_SEC: 10
+    volumes:
+      - ./data:/app/data
     networks:
       - kafka-network
     restart: unless-stopped
@@ -37,11 +40,14 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}"
       SERVER_PORT: "${INGESTOR_PORT:-8080}"
       APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_DLQ_FILEPATH: "/app/data/dead_letter_queue-ingestor-2.jsonl"
       APP_TUNING_BUFFER_SIZE: 100000
       APP_TUNING_BATCH_SIZE: 2000
       APP_TUNING_BATCH_TIMEOUT_MS: 20
       APP_TUNING_KAFKA_SEND_CONCURRENCY: 12
       APP_TUNING_METRICS_INTERVAL_SEC: 10
+    volumes:
+      - ./data:/app/data
     networks:
       - kafka-network
     restart: unless-stopped
@@ -63,11 +69,14 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}"
       SERVER_PORT: "${INGESTOR_PORT:-8080}"
       APP_KAFKA_TOPIC: "taxi-event-data"
+      APP_DLQ_FILEPATH: "/app/data/dead_letter_queue-ingestor-3.jsonl"
       APP_TUNING_BUFFER_SIZE: 100000
       APP_TUNING_BATCH_SIZE: 2000
       APP_TUNING_BATCH_TIMEOUT_MS: 20
       APP_TUNING_KAFKA_SEND_CONCURRENCY: 12
       APP_TUNING_METRICS_INTERVAL_SEC: 10
+    volumes:
+      - ./data:/app/data
     networks:
       - kafka-network
     restart: unless-stopped

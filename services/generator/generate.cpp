@@ -254,7 +254,7 @@ struct SimulationConfig {
 
     // Retry & DLQ config
     size_t max_retries = 3;
-    string dlq_filepath = "dead_letter_queue.jsonl";
+    string dlq_filepath = "data/dead_letter_queue-generator.jsonl";
 
     // Batching config
     size_t batch_size = 200;

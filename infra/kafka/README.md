@@ -21,6 +21,12 @@ cp config/.env.single-machine config/.env
 docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
 ```
 
+토픽 shape 자동 강제/검증:
+```bash
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up kafka-topic-init
+docker logs --tail 50 kafka-topic-init
+```
+
 ## Distributed 실행 (머신별)
 각 명령은 포그라운드 실행이므로 머신별 터미널에서 유지한다.
 ```bash
@@ -32,6 +38,9 @@ docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.
 
 # machine-3
 docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-3 kafka-ui
+
+# machine-1 (topic shape guardrail)
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-topic-init
 ```
 
 ## 상태 확인
@@ -43,6 +52,7 @@ docker compose -f infra/kafka/docker-compose.yml --env-file config/.env ps kafka
 ```bash
 docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --list
 docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --describe --topic taxi-event-data
+docker exec kafka-1 kafka-configs --bootstrap-server localhost:9092 --entity-type topics --entity-name taxi-event-data --describe
 ```
 
 ## 중지

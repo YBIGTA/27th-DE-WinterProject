@@ -25,6 +25,27 @@ services:
       timeout: 5s
       retries: 12
 
+  clickhouse-schema-sync:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: clickhouse-schema-sync
+    restart: "no"
+    env_file:
+      - ../../config/.env
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      SCHEMA_FILE: /schema.sql
+      CLICKHOUSE_SCHEMA_BACKFILL: "${CLICKHOUSE_SCHEMA_BACKFILL:-false}"
+    volumes:
+      - ./schema.sql:/schema.sql:ro
+      - ./scripts/apply_schema.sh:/usr/local/bin/apply_schema.sh:ro
+    entrypoint: ["/bin/bash", "/usr/local/bin/apply_schema.sh"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - kafka-network
+
 
   promtail:
     image: grafana/promtail:3.3.2

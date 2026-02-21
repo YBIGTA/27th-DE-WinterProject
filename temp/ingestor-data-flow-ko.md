@@ -2,7 +2,7 @@
 
 기준 흐름:
 
-[Generator] --(HTTP POST /ingest, /ingest/batch)--> [Nginx LB] --(least_conn)--> [Ingestor] --(Reactive Sink + Batch Send)--> [Kafka: taxi-event-data]
+[Generator] --(HTTP POST /ingest, /ingest/batch)--> [Nginx LB] --(random two least_conn)--> [Ingestor] --(Reactive Sink + Batch Send)--> [Kafka: taxi-event-data]
 
 ## 1. 입력: HTTP 요청 수신
 - Ingestor는 WebFlux(reactive) 기반으로 HTTP 요청을 받습니다.
@@ -29,9 +29,9 @@
 - 내부 버퍼는 `Sinks.many().multicast().onBackpressureBuffer(bufferSize, false)`로 생성됩니다.
 - `ingest()` 동작:
   - 먼저 `tryEmitNext(event)` 시도
-  - `FAIL_NON_SERIALIZED`면 `emitNext(..., emitFailureHandler)`로 busy-loop 재시도
+  - `FAIL_NON_SERIALIZED`면 `tryEmitNext`를 bounded retry(최대 10회, 50us -> 2ms 백오프)로 재시도
   - `FAIL_OVERFLOW`면 드롭하고 `eventsDropped` 증가
-- 버퍼 크기는 `app.tuning.buffer.size` (기본 10,000)이며, 환경변수 `APP_TUNING_BUFFER_SIZE`로 오버라이드 가능합니다.
+- 버퍼 크기는 `app.tuning.buffer.size` (코드 기본 30,000)이며, 환경변수 `APP_TUNING_BUFFER_SIZE`로 오버라이드 가능합니다. (compose 프로파일에서는 100,000 사용)
 
 ## 4. 내부 비동기 파이프라인 구성
 - `@PostConstruct`에서 Sink 소비 파이프라인을 구독합니다.
@@ -42,7 +42,7 @@
   - `.retry()` (파이프라인 단위 재구독)
 - 튜닝 기본값:
   - `batchSize=500`
-  - `timeoutMs=50`
+  - `timeoutMs=10`
   - `sendConcurrency=4`
   - `metricsIntervalSec=10`
 
@@ -93,7 +93,7 @@
 3. Sink 적재 시도  
    `tryEmitNext`로 즉시 적재를 시도합니다.
 4. 동시 emit 충돌 처리  
-   `FAIL_NON_SERIALIZED`면 `emitNext + EmitFailureHandler`로 재시도합니다.
+   `FAIL_NON_SERIALIZED`면 `tryEmitNext`를 bounded retry(최대 10회)로 재시도합니다.
 5. overflow 처리  
    버퍼 가득 참(`FAIL_OVERFLOW`)이면 드롭하고 `429` 경로로 응답합니다.
 6. 배치 형성  
@@ -142,7 +142,7 @@
 ```mermaid
 flowchart TD
     G[Generator]
-    N[Nginx LB least_conn]
+    N[Nginx LB random two least_conn]
     C[IngestionController]
     I[IngestionService.ingest]
     E{tryEmitNext result}

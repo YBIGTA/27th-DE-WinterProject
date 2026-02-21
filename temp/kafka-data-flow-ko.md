@@ -2,6 +2,7 @@
 
 기준 흐름:
 
+[kafka-topic-init] --(shape guard 12/3/min.insync=2)--> [Kafka Cluster: 3 Brokers (KRaft)]  
 [Ingestor Producers] --(Kafka Produce)--> [Kafka Cluster: 3 Brokers (KRaft)] --(Kafka Consume)--> [Flink / Kafka Connect / Other Consumers]
 
 ## 1. 입력: Kafka로 들어오는 트래픽
@@ -31,9 +32,23 @@
 ## 4. 레코드 쓰기/읽기 경로
 - Producer가 bootstrap 서버 중 하나로 접속한 뒤 메타데이터를 받아 대상 partition leader로 전송합니다.
 - 기본 설정상 토픽 자동 생성이 켜져 있어(`KAFKA_AUTO_CREATE_TOPICS_ENABLE=true`), 미존재 토픽 첫 produce 시 생성될 수 있습니다.
-- 자동 생성 토픽의 기본 파티션 수는 `KAFKA_NUM_PARTITIONS=4`입니다.
-- 기본 복제 팩터는 `KAFKA_DEFAULT_REPLICATION_FACTOR=2`로 설정되어 3브로커 중 2복제 기준으로 동작합니다.
+- 자동 생성 토픽의 기본 파티션 수는 `KAFKA_NUM_PARTITIONS=12`입니다.
+- 기본 복제 팩터는 `KAFKA_DEFAULT_REPLICATION_FACTOR=3`로 설정되어 3브로커 전체 복제를 기본값으로 사용합니다.
 - Consumer(Flink/Connect)는 동일 토픽을 독립 consumer group으로 읽어 fan-out 처리합니다.
+
+## 4.1 토픽 shape 가드레일 (`kafka-topic-init`)
+- `kafka-topic-init` one-shot 서비스가 `taxi-event-data`의 shape를 실행 시점에 자동 강제/검증합니다.
+- 목표 정책:
+  - `partitions=12`
+  - `replication-factor=3`
+  - `min.insync.replicas=2`
+- 동작:
+  - 토픽 미존재: 생성
+  - 파티션 부족: 증설
+  - `min.insync.replicas` 불일치: alter
+  - RF 불일치(`!=3`): 자동 축소/확대 대신 실패 처리(운영자 수동 조치 필요)
+- 성공 로그 예시:  
+  `Topic shape verified: topic=taxi-event-data partitions=12 rf=3 min.insync.replicas=2`
 
 ## 5. 상태 저장: 로그/세그먼트/보존 정책
 - 각 브로커 데이터는 `/var/lib/kafka/data`에 저장됩니다.
@@ -42,9 +57,10 @@
   - `KAFKA_LOG_RETENTION_HOURS=24`
   - `KAFKA_LOG_SEGMENT_BYTES=1073741824` (1GB)
 - 트랜잭션/오프셋 내부 토픽 안정성을 위해 아래 값이 고정됩니다.
-  - `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=2`
-  - `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=2`
+  - `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=3`
+  - `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=3`
   - `KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=2`
+  - `KAFKA_MIN_INSYNC_REPLICAS=2` (일반 토픽 write 안전성 하한)
 
 ## 6. 상태 확인과 운영 관찰
 - 각 브로커 healthcheck는 컨테이너 내부 `localhost:29092`에 `kafka-broker-api-versions`를 수행합니다.
@@ -69,19 +85,21 @@
    controller voter 목록 기반으로 메타데이터 쿼럼을 구성합니다.
 5. healthcheck 통과  
    `kafka-broker-api-versions --bootstrap-server localhost:29092` 성공 시 healthy가 됩니다.
-6. producer 접속  
+6. topic-init 가드 실행  
+   `kafka-topic-init`이 `12/3/min.insync=2`를 강제/검증합니다.
+7. producer 접속  
    Ingestor producer가 bootstrap broker에 메타데이터 요청을 보냅니다.
-7. 리더 라우팅  
+8. 리더 라우팅  
    대상 topic/partition 리더 브로커로 produce request가 전달됩니다.
-8. 로그 append/복제  
+9. 로그 append/복제  
    리더 append 후 복제 설정에 따라 팔로워 복제가 진행됩니다.
-9. consumer poll  
+10. consumer poll  
    Flink/Connect consumer가 토픽 offset을 기준으로 데이터를 읽습니다.
-10. 오프셋/내부 상태 갱신  
+11. 오프셋/내부 상태 갱신  
     consumer group offset, transaction state 등 내부 토픽 상태가 갱신됩니다.
-11. 운영 관찰  
+12. 운영 관찰  
     Kafka UI 또는 exporter/Prometheus/Grafana 경로로 메트릭을 확인합니다.
-12. 재시작/복구  
+13. 재시작/복구  
     컨테이너 재기동 시 broker 볼륨의 기존 로그를 기반으로 상태를 복구합니다.
 
 ## 9. 데이터 객체 이동 맵 (어디서 -> 어디로)
@@ -89,12 +107,13 @@
 |---|---|---|---|
 | 1 | Ingestor producer | `ProducerRecord(topic,key,value)` | bootstrap broker |
 | 2 | bootstrap broker | metadata 응답(leader/partition 정보) | producer |
-| 3 | leader broker | produce request batch | partition log append |
-| 4 | follower broker(s) | replicated log entries | ISR/replica state 갱신 |
-| 5 | broker local storage | segment files + index | 보존/롤링 관리 |
-| 6 | consumer (Flink/Connect) | polled records | stream processing / sink |
-| 7 | Kafka internal topics | offsets/txn/group 상태 | 재시작 후 상태 복원 |
-| 8 | Kafka UI | broker/topic/consumer 메타데이터 | 운영자 조회 화면 |
+| 3 | kafka-topic-init | topic shape 검사/보정 요청 | broker metadata |
+| 4 | leader broker | produce request batch | partition log append |
+| 5 | follower broker(s) | replicated log entries | ISR/replica state 갱신 |
+| 6 | broker local storage | segment files + index | 보존/롤링 관리 |
+| 7 | consumer (Flink/Connect) | polled records | stream processing / sink |
+| 8 | Kafka internal topics | offsets/txn/group 상태 | 재시작 후 상태 복원 |
+| 9 | Kafka UI | broker/topic/consumer 메타데이터 | 운영자 조회 화면 |
 
 ## 10. Kafka가 실제로 관리하는 것
 1. 브로커 합의 상태  
@@ -107,40 +126,59 @@
    consumer group offset과 transaction 상태를 내부 토픽으로 관리합니다.
 5. 네트워크 진입점 관리  
    EXTERNAL/INTERNAL/CONTROLLER listener로 클라이언트/브로커/컨트롤러 트래픽을 분리합니다.
+6. 토픽 shape 정책 일관성  
+   `kafka-topic-init`으로 `12/3/min.insync=2` 정책 드리프트를 기동 시점에 조기 차단합니다.
 
 ## 11. 전체 흐름 (Mermaid)
 ```mermaid
 flowchart TD
-    B1[kafka-1 broker+controller (distributed)]
-    B2[kafka-2 broker+controller (distributed)]
-    B3[kafka-3 broker+controller (distributed)]
-    Q[KRaft controller quorum]
+    subgraph CTRL[Control Plane KRaft]
+        B1[kafka 1 broker controller]
+        B2[kafka 2 broker controller]
+        B3[kafka 3 broker controller]
+        Q[KRaft quorum]
 
-    P[Ingestor Producer]
-    TP[(topic taxi-event-data\npartitions)]
-    V1[(kafka1-data)]
-    V2[(kafka2-data)]
-    V3[(kafka3-data)]
+        B1 -. metadata quorum .-> Q
+        B2 -. metadata quorum .-> Q
+        B3 -. metadata quorum .-> Q
+    end
 
-    F[Flink Consumer Group]
-    KC[Kafka Connect Group]
+    subgraph DATA[Data Plane]
+        P[Ingestor producer]
+        TI[kafka-topic-init guard]
+        M[Bootstrap metadata fetch]
+        L[Partition leader]
+        R[Replica brokers]
+        TP[topic taxi event data partitions 12]
+        OFF[consumer offsets topic]
+        TX[transaction state topic]
+        VOLS[kafka broker volumes kafka1 kafka2 kafka3]
+    end
+
+    subgraph CONS[Consumers]
+        F[Flink consumer group]
+        KC[Kafka Connect group]
+    end
+
     UI[Kafka UI]
 
-    B1 --> Q
-    B2 --> Q
-    B3 --> Q
+    P --> M
+    TI -->|ensure 12/3 + min.insync=2| TP
+    M -->|select partition by key| L
+    L -->|append| TP
+    L -->|replicate| R
+    L -->|leader log write| VOLS
+    R -->|replica log write| VOLS
 
-    P -->|produce| TP
-    TP -->|stored on leaders/replicas| V1
-    TP -->|stored on leaders/replicas| V2
-    TP -->|stored on leaders/replicas| V3
+    TP -->|poll| F
+    TP -->|poll| KC
+    F -->|commit offset| OFF
+    KC -->|commit offset| OFF
+    L -->|transaction metadata| TX
 
-    TP -->|consume| F
-    TP -->|consume| KC
-
-    UI -->|metadata/topic/group view| B1
-    UI -->|metadata/topic/group view| B2
-    UI -->|metadata/topic/group view| B3
+    UI -->|read metadata and group state| B1
+    UI -->|read metadata and group state| B2
+    UI -->|read metadata and group state| B3
 ```
 
 해석 포인트:

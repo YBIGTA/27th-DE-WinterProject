@@ -134,6 +134,29 @@ services:
       retries: 15
       start_period: 40s
 
+  kafka-topic-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-topic-init
+    env_file:
+      - ../../config/.env
+    environment:
+      BOOTSTRAP_SERVERS: "${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}"
+      TOPIC_NAME: "taxi-event-data"
+      TOPIC_PARTITIONS: "12"
+      TOPIC_REPLICATION_FACTOR: "3"
+      TOPIC_MIN_INSYNC_REPLICAS: "2"
+      TOPIC_ENSURE_TIMEOUT_SEC: "600"
+      TOPIC_ENSURE_RETRY_SEC: "5"
+    volumes:
+      - ./scripts/ensure_topic_shape.sh:/usr/local/bin/ensure_topic_shape.sh:ro
+    entrypoint: ["/bin/bash", "/usr/local/bin/ensure_topic_shape.sh"]
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - kafka-network
+    restart: "no"
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
