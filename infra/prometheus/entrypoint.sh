@@ -19,6 +19,7 @@ sed \
   -e "s|\${KAFKA_2_EXTERNAL_PORT}|${KAFKA_2_EXTERNAL_PORT}|g" \
   -e "s|\${KAFKA_3_IP}|${KAFKA_3_IP}|g" \
   -e "s|\${KAFKA_3_EXTERNAL_PORT}|${KAFKA_3_EXTERNAL_PORT}|g" \
+  -e "s|\${CLICKHOUSE_IP}|${CLICKHOUSE_IP}|g" \
   /etc/prometheus/prometheus.yml.tmpl > /tmp/prometheus.yml
 
 echo "=== Rendered prometheus.yml ==="

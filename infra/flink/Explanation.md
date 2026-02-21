@@ -1,7 +1,7 @@
 ---
 component: Flink Processor (TaxiRealtimeJob)
 status: CURRENT
-last_reviewed: 2026-02-20
+last_reviewed: 2026-02-21
 core_files:
   - services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java
   - services/flink-job/src/main/java/com/example/TaxiEvent.java
@@ -19,7 +19,7 @@ Kafka로부터 유입되는 원시 택시 이벤트를 수집하여 **순서 재
 ## I/O Flow
 `[Kafka Source] --(TaxiEvent)--> [TaxiRealtimeJob] --(JDBC Sink)--> [ClickHouse: taxi_events]
                                         L--(3m Demand -> ONNX)--> [ClickHouse: taxi_predictions]
-                                        L--(Log Out)--> [Console: ML_DEMAND / LATE_DROP]`
+                                        L--(Log Out)--> [Console: ML_DEMAND]`
 
 ## Implementation Logic
 
@@ -36,7 +36,6 @@ flowchart TD
     C1 -- Valid --> E[KeyBy: trip_id]
     E --> F[Process: Per-Trip Reorder]
     F --> N[Side Output: LATE_EVENTS]
-    N --> O[Print: LATE_DROP]
     F --> G[Map: Spatial Join]
     G --> H[Filter: Valid Zone]
     H --> I[Track 1: JDBC Sink (taxi_events)]
@@ -69,7 +68,7 @@ flowchart TD
 * **Output**:
     * **ClickHouse**: `trip_id`, `ts`, `zone_id`, `event` (정규화된 문자열).
     * **ClickHouse (Prediction)**: `prediction_time`, `target_time`, `zone_id`, `predicted_demand`, `model_version`.
-    * **Console**: `[ML_DEMAND] Zone: {id}, Time: {ts}, Count: {n}` 및 `[LATE_DROP] ...`.
+    * **Console**: `[ML_DEMAND] Zone: {id}, Time: {ts}, Count: {n}`.
 * **Invariants**:
     * `trip_id`/`ts` 누락 또는 `ts` 파싱 실패 데이터는 **raw filter 단계에서 drop**됩니다.
     * `LATE_EVENTS` 사이드 아웃풋은 워터마크 지연(`eventTs <= wm`) 및 재정렬 중 역전(`ts < lastEmittedTs`) 이벤트를 전달합니다.
@@ -82,13 +81,14 @@ flowchart TD
 | **모델 파일 bind mount 사용** | 이미지 재빌드 없이 모델 교체/검증이 가능하기 때문입니다. | 경로/파일 누락 시 잡 시작 시점 에러가 발생합니다. |
 | **병렬도 env 기반 설정** | 환경별로 처리량/안정성을 빠르게 조정하기 위함입니다. | 슬롯 부족 시 태스크가 `scheduled`로 대기할 수 있습니다. |
 | **Idle Cleanup (20m)** | 분산 환경에서 무한히 늘어날 수 있는 상태(State) 크기를 제어하기 위함입니다. | 20분 이상 지연된 매우 늦은 데이터는 정렬 혜택을 받지 못합니다. |
-| **JDBC Batch (기본 5000)** | 코드 기본값은 `5000/1000ms`이며 compose 프로파일에 따라 오버라이드해 적재 성능을 튜닝합니다. | single-machine(`20000/1000ms`)와 distributed(`5000/3000ms`) 간 반영 지연/처리량 특성이 달라집니다. |
+| **JDBC Batch (기본 50000)** | 코드 기본값은 `50000/3000ms`이며 compose 프로파일에 따라 오버라이드해 적재 성능을 튜닝합니다. | single-machine(`50000/3000ms`)와 distributed(`5000/3000ms`) 간 반영 지연/처리량 특성이 달라집니다. |
 
 ## Failure Modes & Handling
 | Failure | Detection | Response |
 | :--- | :--- | :--- |
 | **Deserialization Error** | `SafeTaxiEventSchema`의 `catch` 블록에서 감지됩니다. | 에러 로그 출력 후 해당 메시지만 Skip하여 전체 파이프라인 중단을 방지합니다. |
 | **Required Field / ts Invalid** | raw stream filter(`trip_id`/`ts` null, `Instant.parse` 실패)에서 감지됩니다. | 즉시 drop되며 메인 파이프라인으로 전달되지 않습니다. |
-| **Late/Out-of-order** | `eventTs <= wm` 또는 재정렬 시 `ts < lastEmittedTs` 조건으로 감지됩니다. | `LATE_EVENTS` 사이드 아웃풋으로 전송 후 `[LATE_DROP]` 로그로 모니터링합니다. |
+| **Late/Out-of-order** | `eventTs <= wm` 또는 재정렬 시 `ts < lastEmittedTs` 조건으로 감지됩니다. | `LATE_EVENTS` 사이드 아웃풋으로 전송됩니다. (기본 코드에서는 `LATE_DROP` print sink가 주석 처리되어 있어 로그 출력은 비활성) |
 | **Sink Retry** | JDBC Sink 내부 예외 발생 시 감지됩니다. | 최대 5회까지 재시도(`withMaxRetries(5)`)하며 복구를 시도합니다. |
+| **ONNX 모델 파일 경로 누락** | `Failed to initialize ONNX session` 런타임 예외로 감지됩니다. | 모든 Flink 실행 노드에 `FLINK_ONNX_MODEL_PATH` 경로가 동일하게 존재하도록 볼륨 마운트를 맞춥니다. |
 | **Prediction 미생성** | `taxi_events`는 증가하지만 `taxi_predictions`가 0건인 경우 | `lag_20` 누적 여부, ONNX 로드 로그, prediction sink env(`FLINK_ENABLE_PREDICTION_SINK`)를 점검합니다. |

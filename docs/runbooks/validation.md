@@ -7,6 +7,7 @@ Use this after starting the pipeline to verify it is actually working end-to-end
 - Distributed multi-machine mode
 - Core path validation:
   - `generator -> nginx -> ingestor -> kafka -> flink -> clickhouse`
+  - `flink -> clickhouse.taxi_predictions` (ONNX 예측 sink)
 - Monitoring path validation:
   - `kafka -> kafka-exporter -> prometheus -> grafana`
   - `clickhouse -> grafana`
@@ -91,11 +92,19 @@ docker exec clickhouse clickhouse-client -q "SELECT count() FROM default.taxi_ev
 
 # latest rows
 docker exec clickhouse clickhouse-client -q "SELECT trip_id, ts, zone_id, event FROM default.taxi_events ORDER BY ts DESC LIMIT 10"
+
+# prediction count / latest predictions
+docker exec clickhouse clickhouse-client -q "SELECT count() FROM default.taxi_predictions"
+docker exec clickhouse clickhouse-client -q "SELECT prediction_time, target_time, zone_id, predicted_demand, model_version FROM default.taxi_predictions ORDER BY prediction_time DESC LIMIT 10"
 ```
 
 Expected:
 1. Snapshot 2 count is greater than snapshot 1.
 2. Recent rows are populated while generator runs.
+3. `taxi_predictions`는 초기 warm-up 구간 이후 증가한다.
+
+참고:
+- 기본 `FLINK_MODEL_FEATURE_LAG_STEPS=20`, `FLINK_MODEL_INTERVAL_MINUTES=3`이므로 zone별 첫 예측까지 약 60분의 히스토리가 필요할 수 있습니다.
 
 ## 5) Flink runtime checks
 Run where Flink containers are running.

@@ -83,7 +83,7 @@
 
 구현 근거
 - 시작 설정 출력: `[CONFIG] ...` (`services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java:73`)
-- Late-drop 출력: `"[LATE_DROP] ..."` + `.print()` (`services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java:123`, `services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java:124`)
+- Late-drop 출력 코드는 존재하지만 기본 비활성(주석 처리): `orderedPerTrip.getSideOutput(LATE_EVENTS)...print()` (`services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java:123` ~ `services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java:126`)
 - ClickHouse sink 비활성 경고: `[WARN] ...` (`services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java:152`)
 - 수요집계 결과 `.print()` (`services/flink-job/src/main/java/com/example/TaxiRealtimeJob.java:160`)
 - 역직렬화 스키마 로그

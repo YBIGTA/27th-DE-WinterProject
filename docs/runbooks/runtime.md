@@ -83,9 +83,9 @@ docker compose -f infra/flink/docker-compose.yml --env-file config/.env config >
 KAFKA_1_IP=127.0.0.1
 KAFKA_2_IP=127.0.0.1
 KAFKA_3_IP=127.0.0.1
-KAFKA_EXTERNAL_PORT_1=9092
-KAFKA_EXTERNAL_PORT_2=9094
-KAFKA_EXTERNAL_PORT_3=9096
+KAFKA_1_EXTERNAL_PORT=9092
+KAFKA_2_EXTERNAL_PORT=9094
+KAFKA_3_EXTERNAL_PORT=9096
 KAFKA_INTERNAL_PORT=29092
 
 CLICKHOUSE_IP=127.0.0.1
@@ -99,13 +99,19 @@ INGESTOR_1_PORT=8081
 INGESTOR_2_PORT=8082
 INGESTOR_3_PORT=8083
 
-NGINX_LB_IP=127.0.0.1
+NGINX_IP=127.0.0.1
 NGINX_LB_PORT=8080
 
-FLINK_JOBMANAGER_IP=127.0.0.1
+FLINK_IP=127.0.0.1
 FLINK_JOBMANAGER_PORT=8084
 
+LOKI_IP=127.0.0.1
+LOKI_PORT=3100
+PROMETHEUS_IP=127.0.0.1
+PROMETHEUS_PORT=9090
+GRAFANA_IP=127.0.0.1
 GRAFANA_PORT=3000
+
 KAFKA_UI_PORT=8090
 ```
 
@@ -168,7 +174,7 @@ docker compose -f infra/flink/docker-compose.yml --env-file config/.env up -d --
 검증:
 
 ```bash
-docker logs -f flink-taskmanager
+docker logs -f flink-taskmanager-1
 docker exec flink-jobmanager /opt/flink/bin/flink list
 ```
 
@@ -239,6 +245,7 @@ curl -sf "http://127.0.0.1:${GRAFANA_PORT:-3000}/api/health"
 - 머신 E: Ingestor 3개 + Nginx LB
 - 머신 F: Flink
 - 머신 G: Generator
+- 머신 H: Loki + Prometheus + Grafana (같은 머신도 가능하지만 `LOKI_IP`, `PROMETHEUS_IP`, `GRAFANA_IP`는 각각 분리 정의 권장)
 
 ## 5.1 Kafka 클러스터
 
@@ -273,7 +280,7 @@ docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.
 ```bash
 # machine F
 cd services/flink-job && mvn clean package && cd ../..
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager flink
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager flink-taskmanager-1 flink-taskmanager-2 flink-taskmanager-3
 ```
 
 ## 5.5 Generator
@@ -320,7 +327,9 @@ curl -s http://localhost:8123/ping
 curl -s http://localhost:${NGINX_LB_PORT:-8080}/health
 
 # Flink
-docker logs -f flink-taskmanager
+docker logs -f flink-taskmanager-1
+docker logs -f flink-taskmanager-2
+docker logs -f flink-taskmanager-3
 ```
 
 ## 9. Grafana Geomap 운영값
@@ -369,6 +378,7 @@ docker compose -f infra/kafka/docker-compose.yml --env-file config/.env down -v 
 
 ```bash
 docker exec clickhouse clickhouse-client --query "TRUNCATE TABLE default.taxi_events"
+docker exec clickhouse clickhouse-client --query "TRUNCATE TABLE default.taxi_predictions"
 ```
 
 분산 모드는 각 머신에서 해당 compose 파일로 동일하게 `down`을 실행합니다.
@@ -408,3 +418,4 @@ curl -X POST -H "Content-Type: application/json" \
 3. `kafka-network` missing on non-kafka machines breaks ClickHouse/Flink startup.
 4. Flink TaskManager machine without local `flink-taxi-job:latest` image fails to start.
 5. Single-machine Flink compose uses internal Docker DNS (`kafka-*`, `clickhouse`); only distributed mode should use real reachable host IPs in `config/.env`.
+6. 현재 `infra/flink/docker-compose.distributed.yml` 기준 `flink-taskmanager-3`에는 `/opt/flink/model` 마운트가 없어 ONNX 예측 오퍼레이터가 해당 TM에 스케줄되면 실패할 수 있습니다.

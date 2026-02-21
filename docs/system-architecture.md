@@ -27,6 +27,8 @@ flowchart LR
     C -->|Kafka Producer| D[(Kafka Topic<br/>taxi-event-data)]
     D --> E[Flink Job<br/>TaxiRealtimeJob]
     E --> F[(ClickHouse<br/>default.taxi_events)]
+    E --> F2[(ClickHouse<br/>default.taxi_predictions)]
+    M[(Model Artifact<br/>model/models/taxi_demand_model.onnx)] -.-> E
 
     D -. optional .-> G[Kafka Connect S3 Sink]
     G -.-> H[(AWS S3)]
@@ -44,8 +46,9 @@ flowchart LR
 | Nginx LB | Distributes ingest traffic to ingestor replicas | `infra/nginx/*` + `docs/runbooks/runtime.md` |
 | Ingestor | Accepts HTTP events and asynchronously forwards to Kafka | `services/ingestor/EXPLANATION.md` |
 | Kafka | Durable event log and fan-out source for stream processors/connectors | `infra/kafka/README.md` |
-| Flink | Streaming compute and sink writes to ClickHouse | `infra/flink/Explanation.md` |
-| ClickHouse | Analytical OLAP storage for taxi events | `infra/clickhouse/EXPLANATION.md` |
+| Flink | Streaming compute, raw 이벤트 sink(`taxi_events`), ONNX 기반 예측 sink(`taxi_predictions`) | `infra/flink/Explanation.md` |
+| Model | 3분 집계 기반 수요 예측 모델 학습/ONNX 아티팩트 생성 | `model/EXPLANATION.md` |
+| ClickHouse | Analytical OLAP storage for raw events + prediction results | `infra/clickhouse/EXPLANATION.md` |
 | Grafana/Prometheus | Monitoring, dashboarding, and operational visibility | `infra/grafana/README.md` |
 | Kafka Connect (optional) | S3 export branch from Kafka topic | `infra/connectors/EXPLANATION.md` |
 

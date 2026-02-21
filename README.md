@@ -22,6 +22,7 @@ This branch supports two deployment implementations, both without Kubernetes:
 │   ├── nginx
 │   ├── spark
 │   └── terraform
+├── model
 └── services
     ├── flink-job
     ├── generator
@@ -31,6 +32,9 @@ This branch supports two deployment implementations, both without Kubernetes:
 ## Pipeline
 Core path:
 `generator -> nginx -> ingestor -> kafka -> flink -> clickhouse`
+
+Prediction branch (current default):
+`model (ONNX artifact) -> flink -> clickhouse.taxi_predictions`
 
 Optional branches:
 1. `kafka -> kafka connect s3 sink -> S3`

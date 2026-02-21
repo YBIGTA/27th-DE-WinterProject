@@ -84,7 +84,7 @@ services:
       start_period: 30s
 
   promtail-1:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.3.2
     container_name: promtail-ingestor-1
     privileged: true
     env_file:
@@ -99,7 +99,7 @@ services:
     restart: unless-stopped
 
   promtail-2:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.3.2
     container_name: promtail-ingestor-2
     privileged: true
     env_file:
@@ -114,7 +114,7 @@ services:
     restart: unless-stopped
 
   promtail-3:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.3.2
     container_name: promtail-ingestor-3
     privileged: true
     env_file:

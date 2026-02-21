@@ -31,7 +31,7 @@ services:
 
 
   promtail:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.3.2
     container_name: promtail-grafana
     privileged: true
     env_file:

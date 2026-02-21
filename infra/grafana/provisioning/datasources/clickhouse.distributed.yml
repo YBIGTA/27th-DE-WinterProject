@@ -15,6 +15,6 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://${LOKI_IP}:${PROMETHEUS_PORT}
+    url: http://${PROMETHEUS_IP}:${PROMETHEUS_PORT}
     isDefault: false
     editable: true

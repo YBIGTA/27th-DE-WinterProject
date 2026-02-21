@@ -8,19 +8,15 @@ services:
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - ./prometheus.distributed.yml:/etc/prometheus/prometheus.yml.template:ro
+      - ./prometheus.distributed.yml:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
       - prometheus_data:/prometheus
-    command:
-      - sh
-      - -c
-      - |
-        envsubst < /etc/prometheus/prometheus.yml.template > /etc/prometheus/prometheus.yml
-        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.retention.time=7d
+    entrypoint: /entrypoint.sh
     networks:
       - kafka-network
 
   promtail:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.3.2
     container_name: promtail-prometheus
     privileged: true
     env_file:

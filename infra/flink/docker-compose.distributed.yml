@@ -111,13 +111,15 @@ services:
       - FLINK_ENABLE_CLICKHOUSE_SINK=${FLINK_ENABLE_CLICKHOUSE_SINK:-true}
       - FLINK_CLICKHOUSE_DATABASE=default
       - FLINK_CLICKHOUSE_TABLE=taxi_events
+    volumes:
+      - ../../model/models:/opt/flink/model:ro
     networks:
       - kafka-network
     restart: unless-stopped
 
 
   promtail:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.3.2
     container_name: promtail-flink
     privileged: true
     env_file:

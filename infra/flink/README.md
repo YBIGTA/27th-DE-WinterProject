@@ -27,13 +27,13 @@ cd services/flink-job && mvn clean package && cd ../..
 docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
 
 # distributed
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager
 
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-1
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-taskmanager-1
 
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-2
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-taskmanager-2
 
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-3
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-taskmanager-3
 ```
 
 ## ONNX/Prediction 관련 주요 환경변수
@@ -45,7 +45,10 @@ docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.
 - `FLINK_MODEL_HORIZON_STEPS` (기본 `5`)
 - `FLINK_MODEL_INTERVAL_MINUTES` (기본 `3`)
 
-모델 파일은 compose에서 `../../model/models:/opt/flink/model:ro`로 마운트된다.
+single-machine compose에서는 모든 Flink 컨테이너에 `../../model/models:/opt/flink/model:ro`가 마운트된다.
+
+주의:
+- 현재 `infra/flink/docker-compose.distributed.yml` 기준 `flink-taskmanager-3`에는 모델 볼륨 마운트가 없어, 예측 오퍼레이터가 해당 노드에 배치되면 ONNX 초기화 실패가 발생할 수 있다.
 
 ## 확인
 ```bash
