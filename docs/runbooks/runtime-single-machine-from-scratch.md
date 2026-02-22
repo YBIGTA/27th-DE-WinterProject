@@ -62,8 +62,8 @@ docker compose -f infra/flink/docker-compose.yml --env-file config/.env config >
 ## 3. Kafka 기동 + topic shape 가드레일
 
 ```bash
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-topic-init
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up kafka-topic-init
 ```
 
 검증:
@@ -85,8 +85,8 @@ docker exec kafka-1 kafka-configs --bootstrap-server localhost:9092 --entity-typ
 ## 4. ClickHouse 기동 + 스키마 동기화
 
 ```bash
-docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d
-docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up -d clickhouse-schema-sync
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up
+docker compose -f infra/clickhouse/docker-compose.yml --env-file config/.env up clickhouse-schema-sync
 ```
 
 검증:
@@ -105,7 +105,7 @@ docker logs --tail 100 clickhouse-schema-sync
 ## 5. Ingestor 3개 기동
 
 ```bash
-docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up -d --build
+docker compose -f services/ingestor/docker-compose.yml --env-file config/.env up --build
 ```
 
 검증:
@@ -119,7 +119,7 @@ curl -sf http://localhost:8083/health
 ## 6. Nginx LB 기동
 
 ```bash
-docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/nginx/docker-compose.yml --env-file config/.env up
 curl -sf http://localhost:8080/health
 ```
 
@@ -136,7 +136,7 @@ cd ../..
 기동:
 
 ```bash
-docker compose -f infra/flink/docker-compose.yml --env-file config/.env up -d --build
+docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
 ```
 
 검증:
@@ -193,13 +193,13 @@ docker exec clickhouse clickhouse-client -q "SELECT count() FROM default.taxi_pr
 
 ```bash
 # Loki + Promtail
-docker compose -f infra/loki/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/loki/docker-compose.yml --env-file config/.env up
 
 # Prometheus
-docker compose -f infra/prometheus/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/prometheus/docker-compose.yml --env-file config/.env up
 
 # Grafana
-docker compose -f infra/grafana/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/grafana/docker-compose.yml --env-file config/.env up
 ```
 
 검증:

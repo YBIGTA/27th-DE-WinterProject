@@ -19,7 +19,7 @@ cp config/.env.single-machine config/.env
 ## 2. Loki + Promtail 기동
 
 ```bash
-docker compose -f infra/loki/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/loki/docker-compose.yml --env-file config/.env up
 ```
 
 검증:
@@ -32,7 +32,7 @@ curl -sf "http://127.0.0.1:${PROMTAIL_LOKI_PORT:-9084}/metrics" >/dev/null
 ## 3. Prometheus 기동
 
 ```bash
-docker compose -f infra/prometheus/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/prometheus/docker-compose.yml --env-file config/.env up
 ```
 
 검증:
@@ -44,7 +44,7 @@ curl -sf "http://127.0.0.1:${PROMETHEUS_PORT:-9090}/-/healthy"
 ## 4. Grafana 기동
 
 ```bash
-docker compose -f infra/grafana/docker-compose.yml --env-file config/.env up -d
+docker compose -f infra/grafana/docker-compose.yml --env-file config/.env up
 ```
 
 검증:

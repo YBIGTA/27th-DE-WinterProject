@@ -74,8 +74,8 @@ docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.
 ### 4.1 Kafka 3-broker + topic-init
 
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-1 kafka-2 kafka-3 kafka-ui
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-topic-init
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-1 kafka-2 kafka-3 kafka-ui
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-topic-init
 ```
 
 검증:
@@ -89,15 +89,15 @@ docker exec kafka-1 kafka-configs --bootstrap-server localhost:9092 --entity-typ
 ### 4.2 ClickHouse + 스키마 동기화
 
 ```bash
-docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse clickhouse-schema-sync
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up clickhouse clickhouse-schema-sync
 curl -sf http://localhost:8123/ping
 ```
 
 ### 4.3 Ingestor + Nginx
 
 ```bash
-docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up -d --build ingestor-1 ingestor-2 ingestor-3
-docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up -d nginx-lb
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up --build ingestor-1 ingestor-2 ingestor-3
+docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up nginx-lb
 ```
 
 검증:
@@ -116,7 +116,7 @@ cd services/flink-job
 mvn clean package
 cd ../..
 
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager flink-taskmanager-1 flink-taskmanager-2 flink-taskmanager-3
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager flink-taskmanager-1 flink-taskmanager-2 flink-taskmanager-3
 ```
 
 검증:
@@ -157,9 +157,9 @@ echo "events_delta_10s=$((C2-C1))"
 ## 6. Observability 기동 (선택 권장)
 
 ```bash
-docker compose -f infra/loki/docker-compose.distributed.yml --env-file config/.env up -d
-docker compose -f infra/prometheus/docker-compose.distributed.yml --env-file config/.env up -d
-docker compose -f infra/grafana/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/loki/docker-compose.distributed.yml --env-file config/.env up
+docker compose -f infra/prometheus/docker-compose.distributed.yml --env-file config/.env up
+docker compose -f infra/grafana/docker-compose.distributed.yml --env-file config/.env up
 ```
 
 검증:

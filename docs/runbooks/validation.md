@@ -51,7 +51,7 @@ Run on a machine where `kafka-1` container exists.
 
 ```bash
 # enforce topic shape (single-machine)
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-topic-init
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up kafka-topic-init
 
 # list topics
 docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --list
@@ -203,7 +203,7 @@ docker network ls | rg kafka-network
 5. Distributed에서는 machine A에서 아래 명령으로 토픽 shape guardrail을 적용한다.
 
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-topic-init
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-topic-init
 docker logs --tail 50 kafka-topic-init
 ```
 

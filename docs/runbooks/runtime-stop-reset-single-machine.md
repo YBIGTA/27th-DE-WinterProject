@@ -72,7 +72,7 @@ docker exec clickhouse clickhouse-client --query "TRUNCATE TABLE default.taxi_pr
 ### 3.2 Kafka topic shape 재검증만 수행
 
 ```bash
-docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up -d kafka-topic-init
+docker compose -f infra/kafka/docker-compose.yml --env-file config/.env up kafka-topic-init
 docker logs --tail 100 kafka-topic-init
 ```
 

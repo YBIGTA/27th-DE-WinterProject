@@ -42,7 +42,7 @@ set +a
 ## 2. Loki + Promtail 기동 (H)
 
 ```bash
-docker compose -f infra/loki/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/loki/docker-compose.distributed.yml --env-file config/.env up
 ```
 
 참고:
@@ -62,7 +62,7 @@ curl -sf "http://${NGINX_IP}:${NGINX_PROMTAIL_PORT:-9085}/metrics" >/dev/null
 ## 3. Prometheus 기동 (H)
 
 ```bash
-docker compose -f infra/prometheus/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/prometheus/docker-compose.distributed.yml --env-file config/.env up
 ```
 
 검증:
@@ -74,7 +74,7 @@ curl -sf "http://${PROMETHEUS_IP}:${PROMETHEUS_PORT}/-/healthy"
 ## 4. Grafana 기동 (H)
 
 ```bash
-docker compose -f infra/grafana/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/grafana/docker-compose.distributed.yml --env-file config/.env up
 ```
 
 검증:

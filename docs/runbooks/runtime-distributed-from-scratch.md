@@ -32,6 +32,11 @@
 | G | Generator(native) | `services/generator` |
 | H | Loki + Prometheus + Grafana | 기본 포함 단계 (상세는 observability runbook 참고) |
 
+참고:
+- 위 표는 "권장 예시 토폴로지"입니다. 고정 규칙이 아닙니다.
+- Ingestor는 `ingestor-1/2/3`을 각각 다른 머신(E1/E2/E3)으로 분리 배치할 수 있습니다.
+- Nginx LB도 별도 머신(N)으로 분리 가능합니다.
+
 ## 2. 모든 머신 공통 준비 (필수)
 
 ### 2.1 코드 동기화
@@ -93,25 +98,25 @@ docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.
 머신 A:
 
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-1
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-1
 ```
 
 머신 B:
 
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-2
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-2
 ```
 
 머신 C:
 
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-3 kafka-ui
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-3 kafka-ui
 ```
 
 토픽 shape 가드레일 (머신 A):
 
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-topic-init
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-topic-init
 docker logs --tail 100 kafka-topic-init
 docker exec kafka-1 kafka-topics --bootstrap-server localhost:9092 --describe --topic taxi-event-data
 docker exec kafka-1 kafka-configs --bootstrap-server localhost:9092 --entity-type topics --entity-name taxi-event-data --describe
@@ -122,15 +127,24 @@ docker exec kafka-1 kafka-configs --bootstrap-server localhost:9092 --entity-typ
 ### 3.2 ClickHouse (D)
 
 ```bash
-docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up -d clickhouse clickhouse-schema-sync
+docker compose -f infra/clickhouse/docker-compose.distributed.yml --env-file config/.env up clickhouse clickhouse-schema-sync
 curl -sf "http://${CLICKHOUSE_IP}:${CLICKHOUSE_HTTP_PORT}/ping"
 ```
 
-### 3.3 Ingestor + Nginx (E)
+### 3.3 Ingestor + Nginx (E 또는 E1/E2/E3+N)
 
 ```bash
-docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up -d --build ingestor-1 ingestor-2 ingestor-3
-docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up -d nginx-lb
+# 머신 E1
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up --build ingestor-1
+
+# 머신 E2
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up --build ingestor-2
+
+# 머신 E3
+docker compose -f services/ingestor/docker-compose.distributed.yml --env-file config/.env up --build ingestor-3
+
+# 머신 N
+docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up nginx-lb
 ```
 
 검증:
@@ -156,16 +170,16 @@ cd ../..
 
 ```bash
 # 머신 F1 (JobManager)
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-jobmanager
 
 # 머신 F2 (TaskManager-1)
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-taskmanager-1
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-1
 
 # 머신 F3 (TaskManager-2)
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-taskmanager-2
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-2
 
 # 머신 F4 (TaskManager-3)
-docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-taskmanager-3
+docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up --build flink-taskmanager-3
 ```
 
 검증:
@@ -228,13 +242,13 @@ docker exec clickhouse clickhouse-client -q "SELECT count() FROM default.taxi_pr
 
 ```bash
 # Loki + Promtail
-docker compose -f infra/loki/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/loki/docker-compose.distributed.yml --env-file config/.env up
 
 # Prometheus
-docker compose -f infra/prometheus/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/prometheus/docker-compose.distributed.yml --env-file config/.env up
 
 # Grafana
-docker compose -f infra/grafana/docker-compose.distributed.yml --env-file config/.env up -d
+docker compose -f infra/grafana/docker-compose.distributed.yml --env-file config/.env up
 ```
 
 주의:

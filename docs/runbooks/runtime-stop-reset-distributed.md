@@ -121,7 +121,7 @@ docker exec clickhouse clickhouse-client --query "TRUNCATE TABLE default.taxi_pr
 Kafka topic shape 재검증(머신 A):
 
 ```bash
-docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up -d kafka-topic-init
+docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.env up kafka-topic-init
 docker logs --tail 100 kafka-topic-init
 ```
 
