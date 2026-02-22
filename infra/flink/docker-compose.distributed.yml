@@ -16,6 +16,7 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: ${FLINK_IP}
         jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
+        jobmanager.bind-host: 0.0.0.0
         parallelism.default: 12
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -56,6 +57,7 @@ services:
     command: taskmanager
     ports:
       - "${FLINK_TASKMANAGER_1_RPC_PORT:-6122}:${FLINK_TASKMANAGER_1_RPC_PORT:-6122}"
+      - "${FLINK_TASKMANAGER_1_DATA_PORT:-7001}:${FLINK_TASKMANAGER_1_DATA_PORT:-7001}"
       - "${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}:9249"
     env_file:
       - ../../config/.env
@@ -65,6 +67,9 @@ services:
         jobmanager.rpc.address: ${FLINK_IP}
         jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
         taskmanager.rpc.port: ${FLINK_TASKMANAGER_1_RPC_PORT:-6122}
+        taskmanager.host: ${FLINK_TASKMANAGER_1_IP}
+        taskmanager.bind-host: 0.0.0.0
+        taskmanager.data.port: ${FLINK_TASKMANAGER_1_DATA_PORT:-7001}
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -87,6 +92,7 @@ services:
     command: taskmanager
     ports:
       - "${FLINK_TASKMANAGER_2_RPC_PORT:-6123}:${FLINK_TASKMANAGER_2_RPC_PORT:-6123}"
+      - "${FLINK_TASKMANAGER_2_DATA_PORT:-7002}:${FLINK_TASKMANAGER_2_DATA_PORT:-7002}"
       - "${FLINK_TASKMANAGER_2_METRICS_PORT:-9251}:9249"
     env_file:
       - ../../config/.env
@@ -96,6 +102,9 @@ services:
         jobmanager.rpc.address: ${FLINK_IP}
         jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
         taskmanager.rpc.port: ${FLINK_TASKMANAGER_2_RPC_PORT:-6123}
+        taskmanager.host: ${FLINK_TASKMANAGER_2_IP}
+        taskmanager.bind-host: 0.0.0.0
+        taskmanager.data.port: ${FLINK_TASKMANAGER_2_DATA_PORT:-7002}
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -118,6 +127,7 @@ services:
     command: taskmanager
     ports:
       - "${FLINK_TASKMANAGER_3_RPC_PORT:-6124}:${FLINK_TASKMANAGER_3_RPC_PORT:-6124}"
+      - "${FLINK_TASKMANAGER_3_DATA_PORT:-7003}:${FLINK_TASKMANAGER_3_DATA_PORT:-7003}"
       - "${FLINK_TASKMANAGER_3_METRICS_PORT:-9252}:9249"
     env_file:
       - ../../config/.env
@@ -127,6 +137,9 @@ services:
         jobmanager.rpc.address: ${FLINK_IP}
         jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
         taskmanager.rpc.port: ${FLINK_TASKMANAGER_3_RPC_PORT:-6124}
+        taskmanager.host: ${FLINK_TASKMANAGER_3_IP}
+        taskmanager.bind-host: 0.0.0.0
+        taskmanager.data.port: ${FLINK_TASKMANAGER_3_DATA_PORT:-7003}
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory

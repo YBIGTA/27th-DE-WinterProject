@@ -177,4 +177,5 @@ curl -sf "http://127.0.0.1:${NGINX_PROMTAIL_PORT:-9085}/metrics" >/dev/null
 
 1. `FLINK_IP=flink-jobmanager` -> 실제 JobManager 호스트 IP
 2. `FLINK_TASKMANAGER_1_IP`, `FLINK_TASKMANAGER_2_IP`, `FLINK_TASKMANAGER_3_IP` -> 각 TaskManager 호스트 IP
-3. 모든 `*_IP` -> 각 머신의 실제 IP
+3. `FLINK_TASKMANAGER_1_DATA_PORT`, `FLINK_TASKMANAGER_2_DATA_PORT`, `FLINK_TASKMANAGER_3_DATA_PORT` -> 각 TaskManager 호스트에서 열려 있는 포트
+4. 모든 `*_IP` -> 각 머신의 실제 IP

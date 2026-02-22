@@ -188,11 +188,17 @@ docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.
 # 머신 F1
 docker exec flink-jobmanager /opt/flink/bin/flink list
 docker logs --tail 100 flink-jobmanager
+docker exec flink-jobmanager sh -lc 'wget -qO- http://localhost:8081/jobs/overview'
+docker exec flink-jobmanager sh -lc 'wget -qO- http://localhost:8081/taskmanagers'
+docker inspect -f '{{.Name}} {{.Image}}' flink-jobmanager
 
 # 머신 F2/F3/F4
 docker logs --tail 100 flink-taskmanager-1
 docker logs --tail 100 flink-taskmanager-2
 docker logs --tail 100 flink-taskmanager-3
+docker inspect -f '{{.Name}} {{.Image}}' flink-taskmanager-1
+docker inspect -f '{{.Name}} {{.Image}}' flink-taskmanager-2
+docker inspect -f '{{.Name}} {{.Image}}' flink-taskmanager-3
 ```
 
 주의:
@@ -200,7 +206,10 @@ docker logs --tail 100 flink-taskmanager-3
 - distributed 기본 offset 정책은 `FLINK_KAFKA_START_OFFSETS=committed`
 - `FLINK_IP`는 JobManager가 떠 있는 실제 호스트 IP
 - `FLINK_JOBMANAGER_RPC_PORT`는 TaskManager가 접속할 JobManager RPC 포트 (기본 `6129`)
-- `FLINK_TASKMANAGER_1_IP`, `FLINK_TASKMANAGER_2_IP`, `FLINK_TASKMANAGER_3_IP`는 각 TaskManager 호스트 IP (Prometheus scrape 용)
+- `FLINK_TASKMANAGER_1_IP`, `FLINK_TASKMANAGER_2_IP`, `FLINK_TASKMANAGER_3_IP`는 각 TaskManager 호스트 IP이며 Flink가 외부에 광고하는 주소로도 사용됩니다.
+- `FLINK_TASKMANAGER_1_DATA_PORT`, `FLINK_TASKMANAGER_2_DATA_PORT`, `FLINK_TASKMANAGER_3_DATA_PORT`는 TaskManager 간 shuffle 데이터 포트입니다.
+- 4대(F1~F4)의 Flink 이미지 SHA(`docker inspect -f '{{.Image}}' ...`)는 반드시 동일해야 합니다. 다르면 `Invalid lambda deserialization`로 반복 재시작됩니다.
+- `taskmanagers` API 결과에 `172.x.x.x` 같은 컨테이너 내부 IP가 보이면 distributed 네트워크 설정이 잘못된 상태입니다.
 
 ### 3.5 Generator (G)
 
@@ -273,7 +282,7 @@ curl -sf "http://${GRAFANA_IP}:${GRAFANA_PORT}/api/health"
 - Ingestor: `8081`, `8082`, `8083`
 - Nginx: `8080`, `9113`, `9085`
 - ClickHouse: `8123`, `9000`
-- Flink: `8084`, `6129`, `6122`, `6123`, `6124`, `9249`, `9250`, `9251`, `9252`
+- Flink: `8084`, `6129`, `6122`, `6123`, `6124`, `7001`, `7002`, `7003`, `9249`, `9250`, `9251`, `9252`
 - Kafka UI: `8090`
 - Loki/Promtail: `3100`, `9084`
 - Prometheus: `9090`
