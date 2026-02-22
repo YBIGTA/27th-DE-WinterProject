@@ -3,7 +3,7 @@
 ## 파일 위치
 - Single-machine Compose: infra/prometheus/docker-compose.yml
 - Distributed Compose: infra/prometheus/docker-compose.distributed.yml
-- Single-machine 설정: infra/prometheus/prometheus.yml
+- Single-machine 설정 템플릿: infra/prometheus/prometheus.yml.tmpl
 - Distributed 설정: infra/prometheus/prometheus.distributed.yml
 
 ## 역할
@@ -30,8 +30,9 @@ docker compose -f docker-compose.distributed.yml --env-file ../../config/.env up
 - Kafka (${KAFKA_1_IP}:9308) - Kafka Exporter 메트릭
 - Ingestor (${INGESTOR_1_IP}:8081/8082, ${INGESTOR_3_IP}:8083) - Actuator 메트릭
 - ClickHouse (${CLICKHOUSE_IP}:9363) - ClickHouse 메트릭
-- Nginx (${NGINX_IP}:${NGINX_LB_PORT}) - Nginx 메트릭
-- Flink (${FLINK_IP}:${FLINK_JOBMANAGER_PORT}) - Flink JobManager 메트릭
+- Nginx exporter (${NGINX_IP}:${NGINX_EXPORTER_PORT:-9113}) - 연결/기본 메트릭
+- Nginx promtail (${NGINX_IP}:${NGINX_PROMTAIL_PORT:-9085}) - 로그 기반 retry/timeout 메트릭
+- Flink (${FLINK_IP}:${FLINK_JOBMANAGER_METRICS_PORT:-9249}) + TM 3개 메트릭
 
 ## 상태 확인
 

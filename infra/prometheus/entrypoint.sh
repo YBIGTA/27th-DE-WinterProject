@@ -1,9 +1,18 @@
 #!/bin/sh
 set -e
 
+# Backward compatibility: if TaskManager host IPs are not explicitly set,
+# fall back to JobManager host IP (single-host distributed style).
+: "${FLINK_TASKMANAGER_1_IP:=${FLINK_IP}}"
+: "${FLINK_TASKMANAGER_2_IP:=${FLINK_IP}}"
+: "${FLINK_TASKMANAGER_3_IP:=${FLINK_IP}}"
+
 # Render prometheus.yml from template using environment variables
 sed \
   -e "s|\${FLINK_IP}|${FLINK_IP}|g" \
+  -e "s|\${FLINK_TASKMANAGER_1_IP}|${FLINK_TASKMANAGER_1_IP}|g" \
+  -e "s|\${FLINK_TASKMANAGER_2_IP}|${FLINK_TASKMANAGER_2_IP}|g" \
+  -e "s|\${FLINK_TASKMANAGER_3_IP}|${FLINK_TASKMANAGER_3_IP}|g" \
   -e "s|\${FLINK_JOBMANAGER_PORT}|${FLINK_JOBMANAGER_PORT}|g" \
   -e "s|\${FLINK_JOBMANAGER_METRICS_PORT:-9249}|${FLINK_JOBMANAGER_METRICS_PORT:-9249}|g" \
   -e "s|\${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}|${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}|g" \
@@ -12,6 +21,7 @@ sed \
   -e "s|\${NGINX_IP}|${NGINX_IP}|g" \
   -e "s|\${NGINX_LB_PORT}|${NGINX_LB_PORT}|g" \
   -e "s|\${NGINX_EXPORTER_PORT:-9113}|${NGINX_EXPORTER_PORT:-9113}|g" \
+  -e "s|\${NGINX_PROMTAIL_PORT:-9085}|${NGINX_PROMTAIL_PORT:-9085}|g" \
   -e "s|\${INGESTOR_1_IP}|${INGESTOR_1_IP}|g" \
   -e "s|\${INGESTOR_1_PORT}|${INGESTOR_1_PORT}|g" \
   -e "s|\${INGESTOR_2_IP}|${INGESTOR_2_IP}|g" \

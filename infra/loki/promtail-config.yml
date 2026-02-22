@@ -184,7 +184,7 @@ scrape_configs:
           stage:
     relabel_configs:
       - source_labels: ['__meta_docker_container_name']
-        regex: '/(kafka-[0-9]+|kafka-ui|flink-jobmanager|flink-taskmanager|ingestor-[0-9]+|ingestor-lb|clickhouse|grafana|kafka-exporter|loki|prometheus|promtail)'
+        regex: '/(kafka-[0-9]+|kafka-ui|kafka-topic-init|jmx-exporter-kafka-[0-9]+|flink-jobmanager|flink-taskmanager-[0-9]+|ingestor-[0-9]+|ingestor-lb|nginx-exporter|clickhouse|clickhouse-schema-sync|grafana|kafka-exporter|loki|prometheus|promtail)'
         action: keep
       - target_label: 'job'
         replacement: 'docker'

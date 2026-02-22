@@ -20,6 +20,11 @@ scrape_configs:
       - source_labels: [__meta_docker_container_name]
         regex: '/(promtail|loki).*'
         action: drop
+
+      # Kafka 컴포넌트 컨테이너만 수집
+      - source_labels: [__meta_docker_container_name]
+        regex: '/(kafka-[123]|kafka-ui|kafka-topic-init|jmx-exporter-kafka-[123])'
+        action: keep
       
       # 컨테이너 이름 추출
       - source_labels: [__meta_docker_container_name]

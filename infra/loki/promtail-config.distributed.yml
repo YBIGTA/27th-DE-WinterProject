@@ -187,10 +187,15 @@ scrape_configs:
           stage:
     
     relabel_configs:
-      # 분산 배포: promtail과 loki 컨테이너 제외하고 모두 수집
+      # 분산 배포: self-scrape 방지를 위해 promtail은 제외
       - source_labels: [__meta_docker_container_name]
-        regex: '/(promtail|loki).*'
+        regex: '/promtail.*'
         action: drop
+
+      # Loki 호스트의 loki 컨테이너만 수집 (서비스 로그는 각 컴포넌트 sidecar가 담당)
+      - source_labels: [__meta_docker_container_name]
+        regex: '/(loki)'
+        action: keep
       
       # 컨테이너 이름 추출
       - source_labels: [__meta_docker_container_name]

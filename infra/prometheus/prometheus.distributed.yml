@@ -56,6 +56,14 @@ scrape_configs:
         labels:
           service: "nginx-exporter"
 
+  - job_name: "promtail-nginx"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "${NGINX_IP}:${NGINX_PROMTAIL_PORT:-9085}"
+        labels:
+          service: "promtail-nginx"
+
   - job_name: "clickhouse"
     metrics_path: /metrics
     static_configs:
@@ -72,15 +80,15 @@ scrape_configs:
         labels:
           service: "flink-jobmanager"
       - targets:
-          - "${FLINK_IP}:${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}"
+          - "${FLINK_TASKMANAGER_1_IP}:${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}"
         labels:
           service: "flink-taskmanager-1"
       - targets:
-          - "${FLINK_IP}:${FLINK_TASKMANAGER_2_METRICS_PORT:-9251}"
+          - "${FLINK_TASKMANAGER_2_IP}:${FLINK_TASKMANAGER_2_METRICS_PORT:-9251}"
         labels:
           service: "flink-taskmanager-2"
       - targets:
-          - "${FLINK_IP}:${FLINK_TASKMANAGER_3_METRICS_PORT:-9252}"
+          - "${FLINK_TASKMANAGER_3_IP}:${FLINK_TASKMANAGER_3_METRICS_PORT:-9252}"
         labels:
           service: "flink-taskmanager-3"
 

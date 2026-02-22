@@ -13,6 +13,8 @@ services:
       - ./entrypoint.sh:/entrypoint.sh:ro
       - prometheus_data:/prometheus
     entrypoint: /entrypoint.sh
+    depends_on:
+      - promtail
     networks:
       - kafka-network
 
@@ -26,6 +28,8 @@ services:
       - "--kafka.server=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092}"
       - "--kafka.server=${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094}"
       - "--kafka.server=${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}"
+    depends_on:
+      - promtail
     networks:
       - kafka-network
 
@@ -40,9 +44,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker:/var/lib/docker:ro
     command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    depends_on:
-      - prometheus
-      - kafka-exporter
     networks:
       - kafka-network
 

@@ -21,7 +21,7 @@ services:
     networks:
       - kafka-network
     depends_on:
-      - promtail-1
+      - promtail
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
@@ -52,7 +52,7 @@ services:
     networks:
       - kafka-network
     depends_on:
-      - promtail-2
+      - promtail
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
@@ -83,7 +83,7 @@ services:
     networks:
       - kafka-network
     depends_on:
-      - promtail-3
+      - promtail
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${INGESTOR_PORT:-8080}/health"]
@@ -92,39 +92,9 @@ services:
       retries: 3
       start_period: 30s
 
-  promtail-1:
+  promtail:
     image: grafana/promtail:3.3.2
-    container_name: promtail-ingestor-1
-    privileged: true
-    env_file:
-      - ../../config/.env
-    volumes:
-      - ./promtail-config.yml:/etc/promtail/config.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker:/var/lib/docker:ro
-    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    networks:
-      - kafka-network
-    restart: unless-stopped
-
-  promtail-2:
-    image: grafana/promtail:3.3.2
-    container_name: promtail-ingestor-2
-    privileged: true
-    env_file:
-      - ../../config/.env
-    volumes:
-      - ./promtail-config.yml:/etc/promtail/config.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker:/var/lib/docker:ro
-    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    networks:
-      - kafka-network
-    restart: unless-stopped
-
-  promtail-3:
-    image: grafana/promtail:3.3.2
-    container_name: promtail-ingestor-3
+    container_name: promtail-ingestor
     privileged: true
     env_file:
       - ../../config/.env

@@ -47,7 +47,7 @@ flowchart LR
 | Component | Responsibility | Main Docs |
 |---|---|---|
 | Generator | Replays parquet data as HTTP events with batching/retry/rate-limit/circuit-breaker | `services/generator/EXPLANATION.md` |
-| Nginx LB | Distributes ingest traffic to ingestor replicas | `infra/nginx/*` + `docs/runbooks/runtime.md` |
+| Nginx LB | Distributes ingest traffic to ingestor replicas | `infra/nginx/*` + `docs/runbooks/runtime-single-machine-from-scratch.md` |
 | Ingestor | Accepts HTTP events and asynchronously forwards to Kafka | `services/ingestor/EXPLANATION.md` |
 | Kafka | Durable event log and fan-out source for stream processors/connectors + topic shape guardrail(`kafka-topic-init`) | `infra/kafka/README.md` |
 | Flink | Streaming compute, raw sink(`taxi_events`, `taxi_predictions`) + ONNX inference | `infra/flink/Explanation.md` |
@@ -64,7 +64,7 @@ All components run on one host using component-local compose files.
 Services are split by role (Kafka, ClickHouse, Ingestor/Nginx, Flink, Generator).
 
 Detailed startup/stop order:
-`docs/runbooks/runtime.md`
+`docs/runbooks/runtime.md` (scenario index)
 
 ## 6. Configuration Ownership Model
 High-level principles:
@@ -85,12 +85,12 @@ Component-level failure modes and mitigations:
 `services/generator/EXPLANATION.md`, `services/ingestor/EXPLANATION.md`, `infra/flink/Explanation.md`, `infra/clickhouse/EXPLANATION.md`
 
 ## 8. Observability and Validation
-1. Runtime procedures: `docs/runbooks/runtime.md`
+1. Runtime procedures (scenario index): `docs/runbooks/runtime.md`
 2. Validation checklist: `docs/runbooks/validation.md`
 3. Change verification history: `docs/history/pipeline-optimization-2026-02-14.md`
 
 ## 9. Related Docs
 1. Config model and invariants: `config/EXPLANATION.md`
-2. Full runbook: `docs/runbooks/runtime.md`
+2. Runtime runbook index: `docs/runbooks/runtime.md`
 3. Validation runbook: `docs/runbooks/validation.md`
 4. Historical decisions: `docs/history/`

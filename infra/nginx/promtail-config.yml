@@ -13,22 +13,194 @@ scrape_configs:
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
-    
+    pipeline_stages:
+      - docker: {}
+      - match:
+          selector: '{container="ingestor-lb"} |= "upstream_status="'
+          stages:
+            - regex:
+                expression: '.*" (?P<status>[0-9]{3}) [0-9]+ ".*" ".*" upstream_addr="(?P<upstream_addr>[^"]*)" upstream_status="(?P<upstream_status>[^"]*)" request_time="(?P<request_time>[0-9.]+)" upstream_response_time="(?P<upstream_response_time>[0-9., ]+)".*'
+            - regex:
+                source: status
+                expression: '^(?P<status_class>[0-9]).*$'
+            - regex:
+                source: upstream_response_time
+                expression: '^(?P<upstream_response_time_first>[0-9.]+).*$'
+            - metrics:
+                request_total:
+                  type: Counter
+                  description: "Nginx access-log request count"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+                status_5xx_total:
+                  type: Counter
+                  description: "Nginx access-log 5xx count"
+                  prefix: nginx_
+                  source: status_class
+                  config:
+                    action: inc
+                    value: "5"
+                status_499_total:
+                  type: Counter
+                  description: "Nginx access-log 499 count"
+                  prefix: nginx_
+                  source: status
+                  config:
+                    action: inc
+                    value: "499"
+                request_time_seconds:
+                  type: Histogram
+                  description: "Nginx request_time from access logs"
+                  prefix: nginx_
+                  source: request_time
+                  config:
+                    buckets: [0.01, 0.05, 0.1, 0.3, 0.5, 1, 2, 5, 10]
+                upstream_response_time_seconds:
+                  type: Histogram
+                  description: "Nginx upstream_response_time from access logs"
+                  prefix: nginx_
+                  source: upstream_response_time_first
+                  config:
+                    buckets: [0.01, 0.05, 0.1, 0.3, 0.5, 1, 2, 5, 10]
+      - match:
+          selector: '{container="ingestor-lb"} |~ "upstream_status=.*,.*"'
+          stages:
+            - regex:
+                expression: '.*upstream_status="[^"]*,[[:space:]]*(?P<retry_status>[0-9]{3})".*'
+            - regex:
+                source: retry_status
+                expression: '^(?P<retry_status_class>[0-9]).*$'
+            - metrics:
+                retry_invoked_total:
+                  type: Counter
+                  description: "Nginx retry invoked count from access logs"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+                retry_success_total:
+                  type: Counter
+                  description: "Nginx retry success count from access logs"
+                  prefix: nginx_
+                  source: retry_status_class
+                  config:
+                    action: inc
+                    value: "2"
+                retry_exhausted_total:
+                  type: Counter
+                  description: "Nginx retry exhausted count from access logs"
+                  prefix: nginx_
+                  source: retry_status_class
+                  config:
+                    action: inc
+                    value: "5"
+      - match:
+          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*ingestor-1:"'
+          stages:
+            - metrics:
+                upstream_1_requests_total:
+                  type: Counter
+                  description: "Nginx requests routed to ingestor-1"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+      - match:
+          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*ingestor-2:"'
+          stages:
+            - metrics:
+                upstream_2_requests_total:
+                  type: Counter
+                  description: "Nginx requests routed to ingestor-2"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+      - match:
+          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*ingestor-3:"'
+          stages:
+            - metrics:
+                upstream_3_requests_total:
+                  type: Counter
+                  description: "Nginx requests routed to ingestor-3"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+      - match:
+          selector: '{container="ingestor-lb"} |= "while reading response header from upstream"'
+          stages:
+            - metrics:
+                timeout_read_total:
+                  type: Counter
+                  description: "Nginx upstream read timeout count"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+      - match:
+          selector: '{container="ingestor-lb"} |= "while connecting to upstream"'
+          stages:
+            - metrics:
+                timeout_connect_total:
+                  type: Counter
+                  description: "Nginx upstream connect timeout count"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+      - match:
+          selector: '{container="ingestor-lb"} |= "while sending request to upstream"'
+          stages:
+            - metrics:
+                timeout_send_total:
+                  type: Counter
+                  description: "Nginx upstream send timeout count"
+                  prefix: nginx_
+                  config:
+                    match_all: true
+                    action: inc
+      - regex:
+          expression: '^\[(?P<tag>[A-Z_]+)\]\s*(?P<body>.*)$'
+      - regex:
+          source: tag
+          expression: '^(?:[A-Z_]+_)?(?P<level_from_tag>INFO|WARN|ERROR|DEBUG)$'
+      - regex:
+          source: body
+          expression: '.*(?:^|\s)level=(?P<level>[A-Za-z0-9_.-]+).*'
+      - regex:
+          source: body
+          expression: '.*(?:^|\s)type=(?P<type>[A-Za-z0-9_.-]+).*'
+      - regex:
+          source: body
+          expression: '.*(?:^|\s)stage=(?P<stage>[A-Za-z0-9_.-]+).*'
+      - labels:
+          tag:
+          level:
+          level_from_tag:
+          type:
+          stage:
     relabel_configs:
       - source_labels: [__meta_docker_container_name]
         regex: '/(promtail|loki).*'
         action: drop
-      
+
+      - source_labels: [__meta_docker_container_name]
+        regex: '/(ingestor-lb|nginx-exporter)'
+        action: keep
+
       - source_labels: [__meta_docker_container_name]
         regex: '/(.+)'
         target_label: container
-      
+
       - source_labels: [__meta_docker_container_id]
         regex: '(.{12}).*'
         target_label: container_id
-      
+
       - source_labels: [__meta_docker_container_image]
         target_label: image
-      
+
       - source_labels: [__meta_docker_container_log_stream]
         target_label: stream

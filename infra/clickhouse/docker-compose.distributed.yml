@@ -22,6 +22,8 @@ services:
       - ./users.xml:/etc/clickhouse-server/users.d/zz-custom-users.xml:ro
     networks:
       - kafka-network
+    depends_on:
+      - promtail
     healthcheck:
       test: ["CMD", "bash", "-lc", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
       interval: 10s
@@ -61,8 +63,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker:/var/lib/docker:ro
     command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    depends_on:
-      - clickhouse
     networks:
       - kafka-network
 networks:

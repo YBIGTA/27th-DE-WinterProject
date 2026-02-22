@@ -6,7 +6,7 @@ services:
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
     env_file:
-      - ../../config/.env.distributed
+      - ../../config/.env
     volumes:
       - ./prometheus.yml.tmpl:/etc/prometheus/prometheus.yml.tmpl:ro
       - ./rules:/etc/prometheus/rules:ro

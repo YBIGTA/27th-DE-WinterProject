@@ -6,6 +6,7 @@ pipeline: generator -> nginx -> ingestor -> kafka -> (s3 sink connector -> S3) /
 core_files:
   - config/.env.single-machine
   - config/.env.distributed
+  - config/.env.one-host-test
   - docs/runbooks/runtime.md
   - infra/kafka/docker-compose.yml
   - infra/kafka/docker-compose.distributed.yml
@@ -53,9 +54,14 @@ core_files:
 | Generator | native run (`services/generator`) | `services/generator/config/default.yaml` |
 
 ## Compose 연결 원칙
-1. `config/.env` 준비 (`.env.single-machine` 또는 `.env.distributed` 복사)
+1. `config/.env` 준비 (`.env.single-machine` / `.env.distributed` / `.env.one-host-test` 중 1개 복사)
 2. 필요한 컴포넌트 compose만 직접 실행
 3. 항상 `--env-file config/.env` 명시
+
+## Canonical Runtime Env Profiles
+1. `config/.env.single-machine`: 로컬 1대 전체 기동
+2. `config/.env.distributed`: 실제 멀티 머신 분산 배포
+3. `config/.env.one-host-test`: distributed compose를 1대에서 리허설
 
 ## 제약
 - `config/.env`에는 `*_IP`, `*_PORT`만 허용
@@ -74,8 +80,9 @@ docker compose -f infra/kafka/docker-compose.distributed.yml --env-file config/.
 ## Invariants
 1. `config/.env`에는 `*_IP`, `*_PORT`만 존재
 2. distributed에서는 모든 머신이 동일한 `config/.env` 사용
-3. Ingestor/Flink topic 일치
-4. Flink ClickHouse target(`database.table`)은 `infra/clickhouse/schema.sql`와 일치
+3. distributed에서 Flink는 `FLINK_IP`(JobManager) + `FLINK_TASKMANAGER_1_IP/2_IP/3_IP`(TaskManager 호스트)를 명확히 분리
+4. Ingestor/Flink topic 일치
+5. Flink ClickHouse target(`database.table`)은 `infra/clickhouse/schema.sql`와 일치
 
 ## Operational checks
 ```bash

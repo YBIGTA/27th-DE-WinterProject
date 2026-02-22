@@ -38,7 +38,7 @@ services:
     networks:
       - kafka-network
     depends_on:
-      - promtail-1
+      - promtail
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 || exit 1"]
@@ -86,7 +86,7 @@ services:
     networks:
       - kafka-network
     depends_on:
-      - promtail-2
+      - promtail
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 || exit 1"]
@@ -134,7 +134,7 @@ services:
     networks:
       - kafka-network
     depends_on:
-      - promtail-3
+      - promtail
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 || exit 1"]
@@ -243,39 +243,9 @@ services:
       - kafka-network
     restart: unless-stopped
 
-
-  promtail-1:
+  promtail:
     image: grafana/promtail:3.3.2
-    container_name: promtail-kafka-1
-    privileged: true
-    env_file:
-      - ../../config/.env
-    volumes:
-      - ./promtail-config.yml:/etc/promtail/config.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker:/var/lib/docker:ro
-    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    networks:
-      - kafka-network
-
-  promtail-2:
-    image: grafana/promtail:3.3.2
-    container_name: promtail-kafka-2
-    privileged: true
-    env_file:
-      - ../../config/.env
-    volumes:
-      - ./promtail-config.yml:/etc/promtail/config.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker:/var/lib/docker:ro
-    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    networks:
-      - kafka-network
-
-
-  promtail-3:
-    image: grafana/promtail:3.3.2
-    container_name: promtail-kafka-3
+    container_name: promtail-kafka
     privileged: true
     env_file:
       - ../../config/.env

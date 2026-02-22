@@ -18,6 +18,10 @@ scrape_configs:
       - source_labels: [__meta_docker_container_name]
         regex: '/(promtail|loki).*'
         action: drop
+
+      - source_labels: [__meta_docker_container_name]
+        regex: '/(flink-jobmanager|flink-taskmanager-[123])'
+        action: keep
       
       - source_labels: [__meta_docker_container_name]
         regex: '/(.+)'

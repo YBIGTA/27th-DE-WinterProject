@@ -26,6 +26,8 @@ services:
         envsubst < /etc/grafana/provisioning/datasources/loki.yml.template > /etc/grafana/provisioning/datasources/loki.yml
         # Grafana 실행
         exec /run.sh
+    depends_on:
+      - promtail
     networks:
       - kafka-network
 
@@ -41,8 +43,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker:/var/lib/docker:ro
     command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    depends_on:
-      - grafana
     networks:
       - kafka-network
 

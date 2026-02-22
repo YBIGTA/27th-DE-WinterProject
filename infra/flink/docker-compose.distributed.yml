@@ -7,6 +7,7 @@ services:
     command: standalone-job --job-classname com.example.TaxiRealtimeJob
     ports:
       - "${FLINK_JOBMANAGER_PORT:-8084}:8081"
+      - "${FLINK_JOBMANAGER_RPC_PORT:-6129}:${FLINK_JOBMANAGER_RPC_PORT:-6129}"
       - "${FLINK_JOBMANAGER_METRICS_PORT:-9249}:9249"
     env_file:
       - ../../config/.env
@@ -14,6 +15,7 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: ${FLINK_IP}
+        jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
         parallelism.default: 12
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -44,6 +46,8 @@ services:
       - ../../services/flink-job/data:/opt/flink/data
     networks:
       - kafka-network
+    depends_on:
+      - promtail
 
   # 2. Flink TaskManager
   flink-taskmanager-1:
@@ -51,7 +55,7 @@ services:
     container_name: flink-taskmanager-1
     command: taskmanager
     ports:
-      - "${FLINK_TASKMANAGER_1_RPC_PORT:-6122}:6122"
+      - "${FLINK_TASKMANAGER_1_RPC_PORT:-6122}:${FLINK_TASKMANAGER_1_RPC_PORT:-6122}"
       - "${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}:9249"
     env_file:
       - ../../config/.env
@@ -59,6 +63,8 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: ${FLINK_IP}
+        jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
+        taskmanager.rpc.port: ${FLINK_TASKMANAGER_1_RPC_PORT:-6122}
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -71,6 +77,8 @@ services:
       - ../../services/flink-job/data:/opt/flink/data
     networks:
       - kafka-network
+    depends_on:
+      - promtail
 
   # 3. Flink TaskManager 2
   flink-taskmanager-2:
@@ -78,7 +86,7 @@ services:
     container_name: flink-taskmanager-2
     command: taskmanager
     ports:
-      - "${FLINK_TASKMANAGER_2_RPC_PORT:-6123}:6122"
+      - "${FLINK_TASKMANAGER_2_RPC_PORT:-6123}:${FLINK_TASKMANAGER_2_RPC_PORT:-6123}"
       - "${FLINK_TASKMANAGER_2_METRICS_PORT:-9251}:9249"
     env_file:
       - ../../config/.env
@@ -86,6 +94,8 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: ${FLINK_IP}
+        jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
+        taskmanager.rpc.port: ${FLINK_TASKMANAGER_2_RPC_PORT:-6123}
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -98,6 +108,8 @@ services:
       - ../../services/flink-job/data:/opt/flink/data
     networks:
       - kafka-network
+    depends_on:
+      - promtail
 
   # 4. Flink TaskManager 3
   flink-taskmanager-3:
@@ -105,7 +117,7 @@ services:
     container_name: flink-taskmanager-3
     command: taskmanager
     ports:
-      - "${FLINK_TASKMANAGER_3_RPC_PORT:-6124}:6122"
+      - "${FLINK_TASKMANAGER_3_RPC_PORT:-6124}:${FLINK_TASKMANAGER_3_RPC_PORT:-6124}"
       - "${FLINK_TASKMANAGER_3_METRICS_PORT:-9252}:9249"
     env_file:
       - ../../config/.env
@@ -113,6 +125,8 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: ${FLINK_IP}
+        jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-6129}
+        taskmanager.rpc.port: ${FLINK_TASKMANAGER_3_RPC_PORT:-6124}
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: prom
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -125,6 +139,8 @@ services:
       - ../../services/flink-job/data:/opt/flink/data
     networks:
       - kafka-network
+    depends_on:
+      - promtail
     restart: unless-stopped
 
 
@@ -139,8 +155,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker:/var/lib/docker:ro
     command: -config.file=/etc/promtail/config.yml -config.expand-env=true
-    depends_on:
-      - flink-jobmanager
     networks:
       - kafka-network
 networks:

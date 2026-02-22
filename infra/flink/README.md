@@ -14,6 +14,7 @@ Flink job runtime 값(parallelism/topic/jdbc/table 등)은 compose의 `FLINK_*` 
 cp config/.env.single-machine config/.env
 # distributed는 config/.env.distributed를 기반으로 실제 머신 IP/PORT를 반영
 # one-host distributed fallback 시에는 history 문서대로 FLINK_IP=flink-jobmanager 오버라이드 사용
+# multi-host distributed에서 observability까지 사용 시 FLINK_TASKMANAGER_1_IP/2_IP/3_IP도 각 TM 호스트 IP로 설정
 ```
 
 ## Job 빌드 & 실행 (Application Mode)
@@ -86,7 +87,8 @@ done
 
 실행 모드 참고:
 - Real distributed: 각 머신에서 실제 reachable host IP를 사용한다.
-- One-host distributed fallback: `FLINK_IP=flink-jobmanager`를 적용하고, 나머지 `*_IP` 키는 host-reachable 단일 IP로 맞춘다.
+- Real distributed: `FLINK_JOBMANAGER_RPC_PORT`를 모든 Flink 노드에서 동일하게 맞추고, JobManager 호스트에서 해당 포트를 외부로 열어야 한다.
+- One-host distributed fallback: `FLINK_IP=flink-jobmanager`를 적용하고, `FLINK_TASKMANAGER_*_IP` 및 나머지 `*_IP` 키는 host-reachable 단일 IP로 맞춘다.
 
 ## 확인
 ```bash

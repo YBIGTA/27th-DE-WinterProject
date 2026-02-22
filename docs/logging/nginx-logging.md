@@ -200,8 +200,8 @@ Nginx는 Prometheus를 2계층으로 수집한다.
 2) `promtail` log-derived metrics (retry/timeout/upstream 분해)
 - source: `ingestor-lb` access/error 로그
 - Prometheus scrape:
-  - job: `promtail-loki`
-  - single/distributed: `${LOKI_IP}:${PROMTAIL_LOKI_PORT:-9084}` (promtail `/metrics`)
+  - single: `promtail-loki` (`${LOKI_IP}:${PROMTAIL_LOKI_PORT:-9084}`)
+  - distributed: `promtail-nginx` (`${NGINX_IP}:${NGINX_PROMTAIL_PORT:-9085}`)
 - 생성 metric:
   - `nginx_request_total`, `nginx_status_5xx_total`, `nginx_status_499_total`
   - `nginx_retry_invoked_total`, `nginx_retry_success_total`, `nginx_retry_exhausted_total`

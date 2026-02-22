@@ -1,6 +1,7 @@
 # Pipeline Validation Guide (No Kubernetes)
 
 Use this after starting the pipeline to verify it is actually working end-to-end.
+If runtime is not started yet, choose a scenario runbook first: `docs/runbooks/runtime.md`.
 
 ## Scope
 - Single-machine mode
@@ -197,7 +198,8 @@ docker network ls | rg kafka-network
 ```
 
 4. If Flink cannot consume Kafka in distributed mode, first check JobManager `[CONFIG] bootstrap=...` value.  
-   Real distributed 기본은 `${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT}`이며, one-host fallback에서는 `FLINK_IP=flink-jobmanager` 오버라이드를 적용한다.
+   Real distributed 기본은 `${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT},${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT},${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT}`이며, one-host fallback에서는 `FLINK_IP=flink-jobmanager` 오버라이드를 적용한다.  
+   Flink가 다중 호스트라면 `FLINK_TASKMANAGER_1_IP/2_IP/3_IP`도 각 TaskManager 호스트 IP로 맞춰야 Prometheus target이 정상화된다.
 5. Distributed에서는 machine A에서 아래 명령으로 토픽 shape guardrail을 적용한다.
 
 ```bash
