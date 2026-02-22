@@ -706,9 +706,28 @@ public:
         return true;
     }
 
+    bool try_push(T item) {
+        lock_guard<mutex> lock(mu_);
+        if (closed_ || queue_.size() >= capacity_) return false;
+        queue_.push_back(std::move(item));
+        size_.fetch_add(1, std::memory_order_relaxed);
+        not_empty_.notify_one();
+        return true;
+    }
+
     bool pop(T& out) {
         unique_lock<mutex> lock(mu_);
         not_empty_.wait(lock, [&] { return closed_ || !queue_.empty(); });
+        if (queue_.empty()) return false;
+        out = std::move(queue_.front());
+        queue_.pop_front();
+        size_.fetch_sub(1, std::memory_order_relaxed);
+        not_full_.notify_one();
+        return true;
+    }
+
+    bool try_pop(T& out) {
+        lock_guard<mutex> lock(mu_);
         if (queue_.empty()) return false;
         out = std::move(queue_.front());
         queue_.pop_front();
@@ -1913,6 +1932,15 @@ public:
                     }
 
                     // Try to get new event from payload_queue
+                    if (requeue.try_pop(item)) {
+                        requeue_dequeued_total.fetch_add(1, memory_order_relaxed);
+                        if (i == 0 && processed_count < 5) {
+                            cout << "[DEBUG] Sender 0: Draining retry queue item..." << endl;
+                        }
+                        post_payload(item, rate_limiter, circuit_breaker, requeue, dlq, connection_max_failures);
+                        continue;
+                    }
+
                     if (i == 0 && processed_count == 0) {
                         cout << "[DEBUG] Sender 0: About to pop from payload_queue..." << endl;
                     }
@@ -2209,7 +2237,7 @@ private:
             // Circuit open - requeue if possible
             if (item.can_retry()) {
                 item.increment_retry();
-                if (!requeue.push(std::move(item))) {
+                if (!requeue.try_push(std::move(item))) {
                     // Requeue full -> DLQ
                     dlq.write(item.payload, item.retry_count);
                     lock_guard<mutex> lock(log_mu);
@@ -2258,7 +2286,7 @@ private:
             if (status_code == 429 || status_code >= 500 || status_code == 0) {
                 if (item.can_retry()) {
                     item.increment_retry();
-                    if (!requeue.push(std::move(item))) {
+                    if (!requeue.try_push(std::move(item))) {
                         // Requeue full -> DLQ
                         dlq.write(item.payload, item.retry_count);
                         lock_guard<mutex> lock(log_mu);
@@ -2299,7 +2327,7 @@ private:
             for (auto& item : batch) {
                 if (item.can_retry()) {
                     item.increment_retry();
-                    if (!requeue.push(std::move(item))) {
+                    if (!requeue.try_push(std::move(item))) {
                         dlq.write(item.payload, item.retry_count);
                     } else {
                         requeue_enqueued_total.fetch_add(1, memory_order_relaxed);
@@ -2367,7 +2395,7 @@ private:
             for (auto& item : batch) {
                 if (item.can_retry()) {
                     item.increment_retry();
-                    if (!requeue.push(std::move(item))) {
+                    if (!requeue.try_push(std::move(item))) {
                         dlq.write(item.payload, item.retry_count);
                     } else {
                         requeue_enqueued_total.fetch_add(1, memory_order_relaxed);
