@@ -1,7 +1,5 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -11,90 +9,68 @@
       "id": 1,
       "title": "Total Events",
       "type": "stat",
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 0
-      },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "sql",
-          "rawSql": "SELECT count() as total FROM default.taxi_events WHERE $__timeFilter(ts)",
-          "refId": "A"
-        }
-      ],
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT count() as total FROM default.taxi_events",
+        "refId": "A"
+      }],
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Event Rate (15m)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT round(count() / greatest(dateDiff('second', min(ts), max(ts)), 1), 1) as eps FROM default.taxi_events WHERE ts >= (SELECT max(ts) - toIntervalMinute(15) FROM default.taxi_events)",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 500 },
+            { "color": "red", "value": 1000 }
+          ]},
+          "unit": "short",
+          "custom": {}
         },
         "overrides": []
       }
     },
     {
       "id": 2,
-      "title": "Avg Trip Duration",
+      "title": "Avg Trip Duration (15m)",
       "type": "stat",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 4,
-        "y": 0
-      },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "sql",
-          "rawSql": "SELECT round(avg(duration), 1) as avg_minutes FROM (SELECT trip_id, dateDiff('minute', minIf(ts, event='PICKUP'), maxIf(ts, event='DROPOFF')) as duration FROM default.taxi_events WHERE $__timeFilter(ts) GROUP BY trip_id HAVING duration > 0 AND duration < 180)",
-          "refId": "A"
-        }
-      ],
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT round(avg(duration), 1) as avg_minutes FROM (SELECT trip_id, dateDiff('minute', minIf(ts, event='PICKUP'), maxIf(ts, event='DROPOFF')) as duration FROM default.taxi_events WHERE ts >= (SELECT max(ts) - toIntervalMinute(15) FROM default.taxi_events) GROUP BY trip_id HAVING duration > 0 AND duration < 180)",
+        "refId": "A"
+      }],
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 30
-              },
-              {
-                "color": "red",
-                "value": 60
-              }
-            ]
-          },
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 30 },
+            { "color": "red", "value": 60 }
+          ]},
           "unit": "min"
         },
         "overrides": []
@@ -102,207 +78,127 @@
     },
     {
       "id": 3,
-      "title": "Unique Trips",
+      "title": "Unique Trips (Total)",
       "type": "stat",
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 4
-      },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "sql",
-          "rawSql": "SELECT uniq(trip_id) as unique_trips FROM default.taxi_events WHERE $__timeFilter(ts)",
-          "refId": "A"
-        }
-      ],
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT uniq(trip_id) as unique_trips FROM default.taxi_events",
+        "refId": "A"
+      }],
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "blue", "value": null }] }
         },
         "overrides": []
       }
     },
     {
       "id": 4,
-      "title": "Events Over Time",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 0
+      "title": "Events Over Time (15m)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT formatDateTime(toStartOfMinute(ts), '%m/%d %H:%M') as minute, countIf(event='PICKUP') as PICKUP, countIf(event='DROPOFF') as DROPOFF, countIf(event='INTRANSIT') as INTRANSIT FROM default.taxi_events WHERE ts >= (SELECT max(ts) - toIntervalMinute(15) FROM default.taxi_events) GROUP BY toStartOfMinute(ts) ORDER BY toStartOfMinute(ts)",
+        "refId": "A"
+      }],
+      "options": {
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "stacking": "normal"
       },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "sql",
-          "rawSql": "SELECT toStartOfMinute(ts) as time, event, count() as events FROM default.taxi_events WHERE $__timeFilter(ts) GROUP BY time, event ORDER BY time",
-          "refId": "A"
-        }
-      ],
       "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "pointSize": 5
-          }
-        },
-        "overrides": []
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "PICKUP" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "DROPOFF" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "INTRANSIT" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] }
+        ]
       }
     },
     {
       "id": 5,
-      "title": "Top 10 Zones by Demand",
+      "title": "Top 10 Zones by Demand (15m)",
       "type": "barchart",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
-      },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "sql",
-          "rawSql": "SELECT toString(zone_id) as zone, count() as demand FROM default.taxi_events WHERE event = 'PICKUP' AND $__timeFilter(ts) GROUP BY zone_id ORDER BY demand DESC LIMIT 10",
-          "refId": "A"
-        }
-      ]
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT toString(zone_id) as zone, count() as demand FROM default.taxi_events WHERE event = 'PICKUP' AND ts >= (SELECT max(ts) - toIntervalMinute(15) FROM default.taxi_events) GROUP BY zone_id ORDER BY demand DESC LIMIT 10",
+        "refId": "A"
+      }]
     },
     {
-      "id": 6,
-      "title": "Events Per Minute (Real-time)",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "sql",
-          "rawSql": "SELECT toStartOfMinute(ts) as time, count() as events_per_min FROM default.taxi_events WHERE $__timeFilter(ts) GROUP BY time ORDER BY time",
-          "refId": "A"
-        }
-      ],
+      "id": 13,
+      "title": "Predicted Demand - Top Zones (Latest)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT toString(p.zone_id) as zone, round(p.predicted_demand, 1) as predicted FROM default.taxi_predictions p WHERE p.prediction_time = (SELECT max(prediction_time) FROM default.taxi_predictions) ORDER BY predicted DESC LIMIT 10",
+        "refId": "A"
+      }],
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 1,
-            "fillOpacity": 50
-          },
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "yellow"
-          }
+          "color": { "mode": "fixed", "fixedColor": "orange" }
         },
         "overrides": []
       }
     },
     {
-      "id": 7,
-      "title": "Hourly Event Distribution",
+      "id": 14,
+      "title": "Predicted vs Actual Demand (Top 10 Zones)",
       "type": "barchart",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 16
-      },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "sql",
-          "rawSql": "SELECT toString(toHour(ts)) as hour, countIf(event = 'PICKUP') as PICKUP, countIf(event = 'DROPOFF') as DROPOFF, countIf(event = 'IN_TRANSIT') as IN_TRANSIT FROM default.taxi_events WHERE $__timeFilter(ts) GROUP BY hour ORDER BY toHour(ts)",
-          "refId": "A"
-        }
-      ]
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "WITH latest_pred AS (SELECT zone_id, round(predicted_demand, 1) as predicted FROM default.taxi_predictions WHERE prediction_time = (SELECT max(prediction_time) FROM default.taxi_predictions)), actual AS (SELECT zone_id, count() as actual FROM default.taxi_events WHERE event = 'PICKUP' AND ts >= (SELECT max(ts) - toIntervalMinute(15) FROM default.taxi_events) GROUP BY zone_id) SELECT toString(a.zone_id) as zone, a.actual, coalesce(p.predicted, 0) as predicted FROM actual a LEFT JOIN latest_pred p ON a.zone_id = p.zone_id ORDER BY a.actual DESC LIMIT 10",
+        "refId": "A"
+      }],
+      "options": {
+        "orientation": "horizontal",
+        "groupWidth": 0.7,
+        "barWidth": 0.9
+      }
+    },
+    {
+      "id": 7,
+      "title": "Hourly Event Distribution (24h)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "sql",
+        "rawSql": "SELECT toString(toHour(ts)) as hour, countIf(event = 'PICKUP') as PICKUP, countIf(event = 'DROPOFF') as DROPOFF, countIf(event = 'INTRANSIT') as INTRANSIT FROM default.taxi_events WHERE ts >= (SELECT max(ts) - toIntervalHour(24) FROM default.taxi_events) GROUP BY hour ORDER BY toHour(ts)",
+        "refId": "A"
+      }]
     },
     {
       "id": 9,
-      "title": "Pickup Demand by Zone (Last 24h, % Share)",
+      "title": "Pickup Demand by Zone (15m, % Share)",
       "type": "geomap",
-      "gridPos": {
-        "h": 16,
-        "w": 24,
-        "x": 0,
-        "y": 24
-      },
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "PDEE91DDB90597936"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "PDEE91DDB90597936"
-          },
-          "queryType": "table",
-          "rawSql": "SELECT toString(z.zone_id) as zone_id, z.zone_name, z.borough, count() as demand FROM default.taxi_events e JOIN default.taxi_zones z ON e.zone_id = z.zone_id WHERE e.event = 'PICKUP' AND e.ts >= (SELECT max(ts) - toIntervalHour(24) FROM default.taxi_events) AND z.zone_id NOT IN (57, 104, 105, 264, 265) GROUP BY z.zone_id, z.zone_name, z.borough ORDER BY demand DESC",
-          "refId": "A"
-        }
-      ],
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 28 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "PDEE91DDB90597936" },
+        "queryType": "table",
+        "rawSql": "SELECT toString(z.zone_id) as zone_id, z.zone_name, z.borough, count() as demand FROM default.taxi_events e JOIN default.taxi_zones z ON e.zone_id = z.zone_id WHERE e.event = 'PICKUP' AND e.ts >= (SELECT max(ts) - toIntervalMinute(15) FROM default.taxi_events) AND z.zone_id NOT IN (57, 104, 105, 264, 265) GROUP BY z.zone_id, z.zone_name, z.borough ORDER BY demand DESC",
+        "refId": "A"
+      }],
       "options": {
-        "view": {
-          "id": "coords",
-          "lat": 40.65,
-          "lon": -73.94,
-          "zoom": 10
-        },
+        "view": { "id": "coords", "lat": 40.65, "lon": -73.94, "zoom": 10 },
         "basemap": {
           "name": "CartoDB Dark Matter",
           "type": "xyz",
@@ -312,159 +208,25 @@
           }
         },
         "layers": [
-          {
-            "type": "geojson",
-            "name": "No Data (0%)",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t0_none.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#e0e0e0"
-                },
-                "opacity": 0.6,
-                "fillOpacity": 0.35
-              }
-            },
-            "opacity": 0.6,
-            "tooltip": true
-          },
-          {
-            "type": "geojson",
-            "name": "0-0.05%",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t1_minimal.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#d9f0d3"
-                },
-                "opacity": 0.7,
-                "fillOpacity": 0.6
-              }
-            },
-            "opacity": 0.7,
-            "tooltip": true
-          },
-          {
-            "type": "geojson",
-            "name": "0.05-0.15%",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t2_low.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#a1d99b"
-                },
-                "opacity": 0.7,
-                "fillOpacity": 0.6
-              }
-            },
-            "opacity": 0.7,
-            "tooltip": true
-          },
-          {
-            "type": "geojson",
-            "name": "0.15-0.40%",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t3_medium.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#fddd7e"
-                },
-                "opacity": 0.8,
-                "fillOpacity": 0.65
-              }
-            },
-            "opacity": 0.8,
-            "tooltip": true
-          },
-          {
-            "type": "geojson",
-            "name": "0.40-0.80%",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t4_mid.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#fdae61"
-                },
-                "opacity": 0.8,
-                "fillOpacity": 0.65
-              }
-            },
-            "opacity": 0.8,
-            "tooltip": true
-          },
-          {
-            "type": "geojson",
-            "name": "0.80-1.50%",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t5_high.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#f46d43"
-                },
-                "opacity": 0.8,
-                "fillOpacity": 0.7
-              }
-            },
-            "opacity": 0.8,
-            "tooltip": true
-          },
-          {
-            "type": "geojson",
-            "name": "1.50-3.00%",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t6_vhigh.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#d73027"
-                },
-                "opacity": 0.85,
-                "fillOpacity": 0.75
-              }
-            },
-            "opacity": 0.85,
-            "tooltip": true
-          },
-          {
-            "type": "geojson",
-            "name": "3.00%+",
-            "config": {
-              "src": "http://localhost:18081/taxi_zones_t7_max.geojson",
-              "style": {
-                "color": {
-                  "fixed": "#a50026"
-                },
-                "opacity": 0.85,
-                "fillOpacity": 0.8
-              }
-            },
-            "opacity": 0.85,
-            "tooltip": true
-          }
+          { "type": "geojson", "name": "No Data (0%)", "config": { "src": "http://localhost:18081/taxi_zones_t0_none.geojson", "style": { "color": { "fixed": "#e0e0e0" }, "opacity": 0.6, "fillOpacity": 0.35 } }, "opacity": 0.6, "tooltip": true },
+          { "type": "geojson", "name": "0-0.05%", "config": { "src": "http://localhost:18081/taxi_zones_t1_minimal.geojson", "style": { "color": { "fixed": "#d9f0d3" }, "opacity": 0.7, "fillOpacity": 0.6 } }, "opacity": 0.7, "tooltip": true },
+          { "type": "geojson", "name": "0.05-0.15%", "config": { "src": "http://localhost:18081/taxi_zones_t2_low.geojson", "style": { "color": { "fixed": "#a1d99b" }, "opacity": 0.7, "fillOpacity": 0.6 } }, "opacity": 0.7, "tooltip": true },
+          { "type": "geojson", "name": "0.15-0.40%", "config": { "src": "http://localhost:18081/taxi_zones_t3_medium.geojson", "style": { "color": { "fixed": "#fddd7e" }, "opacity": 0.8, "fillOpacity": 0.65 } }, "opacity": 0.8, "tooltip": true },
+          { "type": "geojson", "name": "0.40-0.80%", "config": { "src": "http://localhost:18081/taxi_zones_t4_mid.geojson", "style": { "color": { "fixed": "#fdae61" }, "opacity": 0.8, "fillOpacity": 0.65 } }, "opacity": 0.8, "tooltip": true },
+          { "type": "geojson", "name": "0.80-1.50%", "config": { "src": "http://localhost:18081/taxi_zones_t5_high.geojson", "style": { "color": { "fixed": "#f46d43" }, "opacity": 0.8, "fillOpacity": 0.7 } }, "opacity": 0.8, "tooltip": true },
+          { "type": "geojson", "name": "1.50-3.00%", "config": { "src": "http://localhost:18081/taxi_zones_t6_vhigh.geojson", "style": { "color": { "fixed": "#d73027" }, "opacity": 0.85, "fillOpacity": 0.75 } }, "opacity": 0.85, "tooltip": true },
+          { "type": "geojson", "name": "3.00%+", "config": { "src": "http://localhost:18081/taxi_zones_t7_max.geojson", "style": { "color": { "fixed": "#a50026" }, "opacity": 0.85, "fillOpacity": 0.8 } }, "opacity": 0.85, "tooltip": true }
         ],
-        "tooltip": {
-          "mode": "details"
-        }
+        "tooltip": { "mode": "details" }
       },
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      }
+      "fieldConfig": { "defaults": {}, "overrides": [] }
     }
   ],
-  "refresh": "10s",
+  "refresh": "15s",
   "schemaVersion": 39,
-  "tags": [
-    "taxi",
-    "clickhouse",
-    "realtime"
-  ],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "2020-01-01T00:00:00.000Z",
-    "to": "2020-01-02T00:00:00.000Z"
-  },
+  "tags": ["taxi", "clickhouse", "realtime"],
+  "templating": { "list": [] },
+  "time": { "from": "now-2y", "to": "now" },
   "timepicker": {},
   "timezone": "Asia/Seoul",
   "title": "NYC Taxi Events",
