@@ -7,6 +7,7 @@ services:
     command: standalone-job --job-classname com.example.TaxiRealtimeJob
     ports:
       - "${FLINK_JOBMANAGER_PORT:-8084}:8081"
+      - "${FLINK_JOBMANAGER_METRICS_PORT:-9249}:9249"
     env_file:
       - ../../config/.env
     environment:
@@ -17,6 +18,9 @@ services:
         restart-strategy.fixed-delay.attempts: 100  
         restart-strategy.fixed-delay.delay: 10s     
         parallelism.default: 12
+        metrics.reporters: prom
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
@@ -51,6 +55,8 @@ services:
     command: taskmanager
     depends_on:
       - flink-jobmanager
+    ports:
+      - "${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}:9249"
     env_file:
       - ../../config/.env
     environment:
@@ -59,6 +65,9 @@ services:
         jobmanager.rpc.address: flink-jobmanager
 
         taskmanager.numberOfTaskSlots: 4
+        metrics.reporters: prom
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
@@ -75,6 +84,8 @@ services:
     command: taskmanager
     depends_on:
       - flink-jobmanager
+    ports:
+      - "${FLINK_TASKMANAGER_2_METRICS_PORT:-9251}:9249"
     env_file:
       - ../../config/.env
     environment:
@@ -83,6 +94,9 @@ services:
         jobmanager.rpc.address: flink-jobmanager
 
         taskmanager.numberOfTaskSlots: 4
+        metrics.reporters: prom
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}
@@ -99,6 +113,8 @@ services:
     command: taskmanager
     depends_on:
       - flink-jobmanager
+    ports:
+      - "${FLINK_TASKMANAGER_3_METRICS_PORT:-9252}:9249"
     env_file:
       - ../../config/.env
     environment:
@@ -107,6 +123,9 @@ services:
         jobmanager.rpc.address: flink-jobmanager
 
         taskmanager.numberOfTaskSlots: 4
+        metrics.reporters: prom
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
       - FLINK_KAFKA_BOOTSTRAP_SERVERS=kafka-1:${KAFKA_INTERNAL_PORT:-29092},kafka-2:${KAFKA_INTERNAL_PORT:-29092},kafka-3:${KAFKA_INTERNAL_PORT:-29092}
       - FLINK_CLICKHOUSE_HOST=clickhouse
       - FLINK_CLICKHOUSE_PORT=${CLICKHOUSE_HTTP_PORT:-8123}

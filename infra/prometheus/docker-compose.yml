@@ -9,6 +9,7 @@ services:
       - ../../config/.env.distributed
     volumes:
       - ./prometheus.yml.tmpl:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./rules:/etc/prometheus/rules:ro
       - ./entrypoint.sh:/entrypoint.sh:ro
       - prometheus_data:/prometheus
     entrypoint: /entrypoint.sh

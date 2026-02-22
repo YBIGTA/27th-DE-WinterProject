@@ -1,0 +1,312 @@
+groups:
+  - name: observability_recording_generator
+    interval: 30s
+    rules:
+      - record: generator:events_sent_success:rate1m
+        expr: sum(rate(generator_events_sent_success_total[1m]))
+
+      - record: generator:events_scheduled:rate1m
+        expr: sum(rate(generator_events_scheduled_total[1m]))
+
+      - record: generator:http_requests:rate1m
+        expr: sum(rate(generator_http_requests_total[1m]))
+
+      - record: generator:http_429:rate1m
+        expr: sum(rate(generator_http_requests_total{code_class="429"}[1m]))
+
+      - record: generator:http_5xx_or_socket:rate1m
+        expr: sum(rate(generator_http_requests_total{code_class=~"5xx|socket_error"}[1m]))
+
+      - record: generator:http_429_ratio:rate1m
+        expr: generator:http_429:rate1m / clamp_min(generator:http_requests:rate1m, 1)
+
+      - record: generator:http_5xx_socket_ratio:rate1m
+        expr: generator:http_5xx_or_socket:rate1m / clamp_min(generator:http_requests:rate1m, 1)
+
+      - record: generator:payload_queue_utilization:ratio
+        expr: max(generator_payload_queue_utilization_ratio)
+
+      - record: generator:requeue_utilization:ratio
+        expr: max(generator_requeue_utilization_ratio)
+
+      - record: generator:requeue_depth:delta5m
+        expr: delta(generator_requeue_depth[5m])
+
+      - record: generator:events_per_sec
+        expr: generator:events_sent_success:rate1m
+
+      - record: generator:events_per_sec:baseline5m
+        expr: avg_over_time(generator:events_per_sec[5m])
+
+      - record: generator:events_per_sec:drop_ratio
+        expr: (generator:events_per_sec:baseline5m - generator:events_per_sec) / clamp_min(generator:events_per_sec:baseline5m, 1)
+
+      - record: generator:batch_wait_seconds:p95
+        expr: histogram_quantile(0.95, sum(rate(generator_batch_wait_duration_seconds_bucket[5m])) by (le))
+
+      - record: generator:http_request_seconds:p95
+        expr: histogram_quantile(0.95, sum(rate(generator_http_request_duration_seconds_bucket[5m])) by (le))
+
+  - name: observability_recording_ingestor
+    interval: 30s
+    rules:
+      - record: ingestor:events_received:rate1m
+        expr: sum(rate(ingestor_events_received_total[1m]))
+
+      - record: ingestor:events_processed:rate1m
+        expr: sum(rate(ingestor_events_processed_total[1m]))
+
+      - record: ingestor:events_failed:rate1m
+        expr: sum(rate(ingestor_events_failed_total[1m]))
+
+      - record: ingestor:events_dropped:rate1m
+        expr: sum(rate(ingestor_events_dropped_total[1m]))
+
+      - record: ingestor:events_processed:baseline5m
+        expr: avg_over_time(ingestor:events_processed:rate1m[5m])
+
+      - record: ingestor:events_processed:drop_ratio
+        expr: (ingestor:events_processed:baseline5m - ingestor:events_processed:rate1m) / clamp_min(ingestor:events_processed:baseline5m, 1)
+
+      - record: ingestor:emit_total:rate1m
+        expr: sum(rate(ingestor_emit_total[1m]))
+
+      - record: ingestor:emit_non_serialized_ratio:rate1m
+        expr: sum(rate(ingestor_emit_non_serialized_total[1m])) / clamp_min(ingestor:emit_total:rate1m, 1)
+
+      - record: ingestor:emit_overflow_ratio:rate1m
+        expr: sum(rate(ingestor_emit_overflow_total[1m])) / clamp_min(ingestor:emit_total:rate1m, 1)
+
+      - record: ingestor:kafka_inflight_utilization:ratio
+        expr: max(ingestor_kafka_records_inflight_estimate) / clamp_min(max(ingestor_kafka_sender_max_inflight), 1)
+
+      - record: ingestor:retry_attempt_rate:rate1m
+        expr: sum(rate(ingestor_retry_attempts_total[1m])) / clamp_min(sum(rate(ingestor_batches_sent_total[1m])), 1)
+
+      - record: ingestor:http_requests:rate1m
+        expr: sum(rate(http_server_requests_seconds_count{job="ingestor",uri=~"/ingest|/ingest/batch"}[1m]))
+
+      - record: ingestor:http_429_ratio:rate1m
+        expr: sum(rate(http_server_requests_seconds_count{job="ingestor",uri=~"/ingest|/ingest/batch",status="429"}[1m])) / clamp_min(ingestor:http_requests:rate1m, 1)
+
+      - record: ingestor:http_5xx_ratio:rate1m
+        expr: sum(rate(http_server_requests_seconds_count{job="ingestor",uri=~"/ingest|/ingest/batch",status=~"5.."}[1m])) / clamp_min(ingestor:http_requests:rate1m, 1)
+
+      - record: ingestor:kafka_batch_send_seconds:p95
+        expr: histogram_quantile(0.95, sum(rate(ingestor_kafka_batch_send_duration_seconds_bucket[5m])) by (le))
+
+      - record: ingestor:heap_used_pct
+        expr: 100 * max(jvm_memory_used_bytes{job="ingestor",area="heap"}) / clamp_min(max(jvm_memory_max_bytes{job="ingestor",area="heap"}), 1)
+
+      - record: ingestor:gc_pause_seconds:p95
+        expr: histogram_quantile(0.95, sum(rate(jvm_gc_pause_seconds_bucket{job="ingestor"}[5m])) by (le))
+
+  - name: observability_recording_kafka
+    interval: 30s
+    rules:
+      - record: kafka:lag_total
+        expr: sum(kafka_consumergroup_lag)
+
+      - record: kafka:lag_max
+        expr: max(kafka_consumergroup_lag)
+
+      - record: kafka:lag_delta_10m
+        expr: sum(kafka_consumergroup_lag) - sum(kafka_consumergroup_lag offset 10m)
+
+      - record: kafka:under_replicated_total
+        expr: sum(kafka_topic_partition_under_replicated_partition)
+
+      - record: kafka:leader_partitions:by_leader
+        expr: count by (leader) (kafka_topic_partition_leader)
+
+      - record: kafka:leader_skew_pct
+        expr: 100 * (max(kafka:leader_partitions:by_leader) - min(kafka:leader_partitions:by_leader)) / clamp_min(avg(kafka:leader_partitions:by_leader), 1)
+
+      - record: kafka:at_min_isr_total
+        expr: max({__name__=~"kafka_server_replicamanager_atminisrcount|kafka_server_replicamanager_atminisrpartitioncount|kafka_.*atminisr.*"})
+
+      - record: kafka:isr_shrinks:rate5m
+        expr: sum(rate({__name__=~"kafka_server_replicamanager_isrshrinks_total|kafka_server_replicamanager_isrshrinks_total"}[5m]))
+
+      - record: kafka:request_queue_size:max
+        expr: max(kafka_network_requestchannel_requestqueuesize)
+
+      - record: kafka:request_handler_idle_pct:avg
+        expr: avg(kafka_server_kafkarequesthandlerpool_requesthandleravgidle_percent)
+
+      - record: kafka:network_processor_idle_pct:avg
+        expr: avg(kafka_network_socketserver_networkprocessoravgidle_percent)
+
+      - record: kafka:produce_total_time_ms:p95
+        expr: max(kafka_network_requestmetrics_totaltimems{request=~"Produce|produce",quantile="0.95"})
+
+      - record: kafka:fetch_total_time_ms:p95
+        expr: max(kafka_network_requestmetrics_totaltimems{request=~"Fetch.*|fetch.*",quantile="0.95"})
+
+      - record: kafka:produce_not_enough_replicas_errors:rate1m
+        expr: sum(rate({__name__=~"kafka_.*notenoughreplicas.*_total"}[1m]))
+
+      - record: kafka:controller_election_count:delta10m
+        expr: sum(increase({__name__=~"kafka_.*election.*_total"}[10m]))
+
+      - record: kafka:broker_disk_used_pct:max
+        expr: max(kafka_broker_disk_used_pct)
+
+      - record: kafka:broker_disk_io_util_pct:max
+        expr: max(kafka_broker_disk_io_util_pct)
+
+  - name: observability_recording_nginx
+    interval: 30s
+    rules:
+      - record: nginx:rps:rate1m
+        expr: sum(rate(nginx_request_total[1m])) or sum(rate(nginx_http_requests_total[1m]))
+
+      - record: nginx:connections_active:max
+        expr: max(nginx_connections_active)
+
+      - record: nginx:connections_writing:max
+        expr: max(nginx_connections_writing)
+
+      - record: nginx:status_5xx_ratio:rate1m
+        expr: sum(rate(nginx_status_5xx_total[1m])) / clamp_min(sum(rate(nginx_request_total[1m])), 1)
+
+      - record: nginx:status_499_ratio:rate1m
+        expr: sum(rate(nginx_status_499_total[1m])) / clamp_min(sum(rate(nginx_request_total[1m])), 1)
+
+      - record: nginx:retry_invoked_ratio:rate5m
+        expr: sum(rate(nginx_retry_invoked_total[5m])) / clamp_min(sum(rate(nginx_request_total[5m])), 1)
+
+      - record: nginx:retry_exhausted_ratio:rate5m
+        expr: sum(rate(nginx_retry_exhausted_total[5m])) / clamp_min(sum(rate(nginx_request_total[5m])), 1)
+
+      - record: nginx:retry_success_ratio:rate5m
+        expr: sum(rate(nginx_retry_success_total[5m])) / clamp_min(sum(rate(nginx_retry_invoked_total[5m])), 1)
+
+      - record: nginx:timeout_read:rate10s
+        expr: sum(rate(nginx_timeout_read_total[10s]))
+
+      - record: nginx:upstream_1_share_pct:rate5m
+        expr: 100 * sum(rate(nginx_upstream_1_requests_total[5m])) / clamp_min((sum(rate(nginx_upstream_1_requests_total[5m])) + sum(rate(nginx_upstream_2_requests_total[5m])) + sum(rate(nginx_upstream_3_requests_total[5m]))), 1)
+
+      - record: nginx:upstream_2_share_pct:rate5m
+        expr: 100 * sum(rate(nginx_upstream_2_requests_total[5m])) / clamp_min((sum(rate(nginx_upstream_1_requests_total[5m])) + sum(rate(nginx_upstream_2_requests_total[5m])) + sum(rate(nginx_upstream_3_requests_total[5m]))), 1)
+
+      - record: nginx:upstream_3_share_pct:rate5m
+        expr: 100 * sum(rate(nginx_upstream_3_requests_total[5m])) / clamp_min((sum(rate(nginx_upstream_1_requests_total[5m])) + sum(rate(nginx_upstream_2_requests_total[5m])) + sum(rate(nginx_upstream_3_requests_total[5m]))), 1)
+
+      - record: nginx:request_time_seconds:p95
+        expr: histogram_quantile(0.95, sum(rate(nginx_request_time_seconds_bucket[5m])) by (le))
+
+      - record: nginx:upstream_response_time_seconds:p95
+        expr: histogram_quantile(0.95, sum(rate(nginx_upstream_response_time_seconds_bucket[5m])) by (le))
+
+      - record: nginx:downstream_gap_ms:p95
+        expr: 1000 * clamp_min(nginx:request_time_seconds:p95 - nginx:upstream_response_time_seconds:p95, 0)
+
+  - name: observability_recording_flink
+    interval: 30s
+    rules:
+      - record: flink:source_records_in:rate1m
+        expr: sum(rate({__name__=~"flink_.*numRecordsIn.*|flink_source_records_in_total"}[1m]))
+
+      - record: flink:source_records_out:rate1m
+        expr: sum(rate({__name__=~"flink_.*numRecordsOut.*|flink_source_records_out_total"}[1m]))
+
+      - record: flink:consumer_lag_total
+        expr: sum(kafka_consumergroup_lag{consumergroup=~".*flink.*"}) or sum(kafka_consumergroup_lag{group=~".*flink.*"})
+
+      - record: flink:consumer_lag_delta_10m
+        expr: flink:consumer_lag_total - (flink:consumer_lag_total offset 10m)
+
+      - record: flink:operator_backpressured_time_pct:max
+        expr: max({__name__=~"flink_.*backPressuredTimeMsPerSecond.*|flink_operator_backpressured_time_pct"})
+
+      - record: flink:operator_subtask_skew_ratio:max
+        expr: max(flink_operator_subtask_skew_ratio)
+
+      - record: flink:last_completed_checkpoint_age_sec
+        expr: max({__name__=~"flink_.*lastCompletedCheckpointAge.*|flink_last_completed_checkpoint_age_sec"})
+
+      - record: flink:checkpoint_alignment_ms:p95
+        expr: max({__name__=~"flink_.*checkpoint.*alignment.*|flink_checkpoint_alignment_ms_p95"})
+
+      - record: flink:watermark_lag_ms:max
+        expr: max({__name__=~"flink_.*watermark.*lag.*|flink_watermark_lag_ms"})
+
+      - record: flink:watermark_stall_sec:max
+        expr: max(flink_watermark_stall_sec)
+
+      - record: flink:jdbc_flush_latency_ms:p95
+        expr: max({__name__=~"flink_.*jdbc.*flush.*p95.*|flink_jdbc_flush_latency_ms_p95"})
+
+      - record: flink:dlq_ratio:rate1m
+        expr: sum(rate(flink_dlq_total_written[1m])) / clamp_min(flink:source_records_in:rate1m, 1)
+
+      - record: flink:data_balance_gap_ratio:max
+        expr: max(flink_data_balance_gap_ratio)
+
+      - record: flink:demand_rows_in:rate1m
+        expr: sum(rate(flink_demand_rows_in_total[1m]))
+
+      - record: flink:prediction_rows_out:rate1m
+        expr: sum(rate(flink_prediction_rows_out_total[1m]))
+
+      - record: flink:onnx_infer_errors:rate1m
+        expr: sum(rate(flink_onnx_infer_errors_total[1m]))
+
+      - record: flink:dlq_write_errors:rate1m
+        expr: sum(rate(flink_dlq_write_errors_total[1m]))
+
+      - record: flink:e2e_latency_ms:p95
+        expr: max(flink_e2e_latency_ms_p95)
+
+      - record: flink:e2e_latency_ms:p99
+        expr: max(flink_e2e_latency_ms_p99)
+
+  - name: observability_recording_clickhouse
+    interval: 30s
+    rules:
+      - record: clickhouse:parts_active:max
+        expr: max({__name__=~"ClickHouse(Metrics|Metric)_PartsActive.*|clickhouse_active_parts_total"})
+
+      - record: clickhouse:merges_in_progress:max
+        expr: max({__name__=~"ClickHouse(Metrics|Metric)_BackgroundMergesAndMutationsPoolTask.*|clickhouse_merges_in_progress"})
+
+      - record: clickhouse:merge_rows_per_sec:rate5m
+        expr: sum(rate({__name__=~"ClickHouseProfileEvents_MergedRows.*|clickhouse_merge_rows_total"}[5m]))
+
+      - record: clickhouse:insert_query_count:delta10s
+        expr: sum(increase(clickhouse_insert_query_count_total[10s])) or sum(clickhouse_insert_query_count_delta_10s)
+
+      - record: clickhouse:insert_error:delta10s
+        expr: sum(increase(clickhouse_insert_errors_total[10s])) or sum(clickhouse_insert_error_delta_10s)
+
+      - record: clickhouse:insert_latency_ms:p95
+        expr: max(clickhouse_insert_latency_ms_p95)
+
+      - record: clickhouse:raw_rows_delta_10s
+        expr: (sum(increase(clickhouse_raw_events_rows_total[10s])) + sum(increase(clickhouse_raw_predictions_rows_total[10s]))) or (sum(clickhouse_raw_events_rows_delta_10s) + sum(clickhouse_raw_predictions_rows_delta_10s))
+
+      - record: clickhouse:latest_dup_groups_total
+        expr: (max(clickhouse_latest_dup_groups_events) + max(clickhouse_latest_dup_groups_predictions))
+
+      - record: clickhouse:serving_latest_event_age_sec
+        expr: max(clickhouse_serving_latest_event_age_sec)
+
+      - record: clickhouse:ingest_to_serving_lag_sec
+        expr: max(clickhouse_ingest_to_serving_lag_sec)
+
+      - record: clickhouse:query_p95_latest_ms
+        expr: max(clickhouse_q_p95_latest_ms)
+
+      - record: clickhouse:read_amp_ratio
+        expr: max(clickhouse_read_amp_ratio)
+
+      - record: clickhouse:select_count:delta1m
+        expr: sum(increase(clickhouse_select_query_count_total[1m])) or sum(clickhouse_select_count_delta_1m)
+
+      - record: clickhouse:disk_used_pct
+        expr: max(clickhouse_disk_used_pct) or (100 * sum({__name__=~"ClickHouseAsyncMetrics_DiskUsed.*"}) / clamp_min(sum({__name__=~"ClickHouseAsyncMetrics_DiskTotal.*"}), 1))
+
+      - record: clickhouse:days_to_full
+        expr: max(clickhouse_days_to_full)

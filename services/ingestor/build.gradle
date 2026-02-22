@@ -18,6 +18,8 @@ repositories {
 dependencies {
     // 1. 핵심: WebFlux (Netty 기반 고성능 서버)
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
     
     // 2. Kafka 연동
     implementation 'org.springframework.kafka:spring-kafka'

@@ -4,6 +4,7 @@
 - Single-machine compose: `infra/clickhouse/docker-compose.yml`
 - Distributed compose: `infra/clickhouse/docker-compose.distributed.yml`
 - Schema: `infra/clickhouse/schema.sql`
+- Logging guide: `docs/logging/clickhouse-logging.md`
 
 ClickHouse runtime 값은 compose에 하드코딩되어 있고, schema는 mount로 초기화된다.
 현재 기본 스키마에는 이벤트 원본 테이블(`taxi_events`)과 예측 결과 테이블(`taxi_predictions`)이 포함되어 있다.

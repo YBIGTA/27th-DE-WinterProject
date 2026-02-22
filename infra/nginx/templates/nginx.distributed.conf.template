@@ -7,7 +7,8 @@ http {
                            '$status $body_bytes_sent "$http_referer" "$http_user_agent" '
                            'upstream_addr="$upstream_addr" upstream_status="$upstream_status" '
                            'request_time="$request_time" upstream_response_time="$upstream_response_time"';
-    access_log /var/log/nginx/access.log upstream_log;
+    access_log /dev/stdout upstream_log;
+    error_log /dev/stderr warn;
 
     upstream ingestors {
         random two least_conn;
@@ -43,6 +44,16 @@ http {
         location /health {
             return 200 'OK';
             add_header Content-Type text/plain;
+        }
+
+        location = /nginx_status {
+            stub_status;
+            access_log off;
+            allow 127.0.0.1;
+            allow 10.0.0.0/8;
+            allow 172.16.0.0/12;
+            allow 192.168.0.0/16;
+            deny all;
         }
     }
 }

@@ -1,0 +1,1071 @@
+groups:
+  - name: observability_alerts_targets
+    interval: 30s
+    rules:
+      - alert: JobDownGenerator
+        expr: up{job="generator"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator metrics endpoint down"
+          description: "Prometheus cannot scrape generator /metrics for 3m."
+
+      - alert: JobDownIngestor
+        expr: up{job="ingestor"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor metrics endpoint down"
+          description: "Prometheus cannot scrape ingestor actuator endpoint for 3m."
+
+      - alert: JobDownKafkaExporter
+        expr: up{job="kafka"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka exporter down"
+          description: "Prometheus cannot scrape kafka-exporter for 3m."
+
+      - alert: JobDownKafkaJmx
+        expr: up{job="kafka-jmx"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka JMX exporter down"
+          description: "Prometheus cannot scrape kafka-jmx target for 3m."
+
+      - alert: JobDownFlink
+        expr: up{job="flink"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: flink
+        annotations:
+          summary: "Flink metrics endpoint down"
+          description: "Prometheus cannot scrape flink metrics for 3m."
+
+      - alert: JobDownClickHouse
+        expr: up{job="clickhouse"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse metrics endpoint down"
+          description: "Prometheus cannot scrape clickhouse /metrics for 3m."
+
+      - alert: JobDownNginxExporter
+        expr: up{job="nginx"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: nginx
+        annotations:
+          summary: "Nginx exporter down"
+          description: "Prometheus cannot scrape nginx exporter for 3m."
+
+  - name: observability_alerts_generator
+    interval: 30s
+    rules:
+      - alert: GeneratorPayloadQueueHighWarn
+        expr: generator:payload_queue_utilization:ratio >= 0.80
+        for: 60s
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator payload queue utilization high"
+          description: "payload_queue_util_pct >= 80% for 60s."
+
+      - alert: GeneratorPayloadQueueHighError
+        expr: generator:payload_queue_utilization:ratio >= 0.95
+        for: 30s
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator payload queue critically high"
+          description: "payload_queue_util_pct >= 95% for 30s."
+
+      - alert: GeneratorRequeueDepthGrowing
+        expr: generator:requeue_depth:delta5m > 0
+        for: 50s
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator requeue depth keeps growing"
+          description: "requeue_depth increased for 5 windows."
+
+      - alert: GeneratorRequeueUtilizationCritical
+        expr: generator:requeue_utilization:ratio >= 0.70
+        for: 30s
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator requeue utilization critical"
+          description: "requeue_depth >= 70% capacity for 30s."
+
+      - alert: GeneratorDlqWritesDetected
+        expr: increase(generator_dlq_writes_total[30s]) > 0
+        for: 30s
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator DLQ writes detected"
+          description: "dlq_writes_delta_10s > 0 over consecutive windows."
+
+      - alert: GeneratorDroppedNonRetryableDetected
+        expr: increase(generator_dropped_non_retryable_total[1m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator dropped non-retryable events"
+          description: "dropped_non_retryable_delta_10s > 0."
+
+      - alert: GeneratorHttp429RatioWarn
+        expr: generator:http_429_ratio:rate1m >= 0.10
+        for: 60s
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator HTTP 429 ratio elevated"
+          description: "429 ratio >= 10% for 60s."
+
+      - alert: GeneratorHttp429RatioError
+        expr: generator:http_429_ratio:rate1m >= 0.20
+        for: 120s
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator HTTP 429 ratio critical"
+          description: "429 ratio >= 20% for 120s."
+
+      - alert: GeneratorHttp5xxSocketRatioWarn
+        expr: generator:http_5xx_socket_ratio:rate1m >= 0.05
+        for: 60s
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator 5xx/socket error ratio elevated"
+          description: "(5xx + socket_error) ratio >= 5% for 60s."
+
+      - alert: GeneratorHttp5xxSocketRatioError
+        expr: generator:http_5xx_socket_ratio:rate1m >= 0.15
+        for: 60s
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator 5xx/socket error ratio critical"
+          description: "(5xx + socket_error) ratio >= 15% for 60s."
+
+      - alert: GeneratorCircuitBreakerOpenWarn
+        expr: max(generator_circuit_breaker_state) == 2
+        for: 30s
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator circuit breaker is OPEN"
+          description: "cb_state=OPEN for 30s."
+
+      - alert: GeneratorCircuitBreakerOpenError
+        expr: max(generator_circuit_breaker_state) == 2
+        for: 120s
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator circuit breaker OPEN persisted"
+          description: "cb_state=OPEN for 120s."
+
+      - alert: GeneratorThroughputDropWarn
+        expr: generator:events_per_sec:drop_ratio > 0.30
+        for: 60s
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator throughput dropped"
+          description: "events/sec dropped by >30% from 5m baseline for 60s."
+
+      - alert: GeneratorThroughputDropError
+        expr: generator:events_per_sec:drop_ratio > 0.50
+        for: 120s
+        labels:
+          severity: critical
+          component: generator
+        annotations:
+          summary: "Generator throughput critically dropped"
+          description: "events/sec dropped by >50% from 5m baseline for 120s."
+
+      - alert: GeneratorAccountingGapWarn
+        expr: abs(generator_events_accounting_gap_delta_10s) > clamp_min(generator_events_scheduled_delta_10s * 0.005, 100)
+        for: 30s
+        labels:
+          severity: warning
+          component: generator
+        annotations:
+          summary: "Generator accounting gap detected"
+          description: "events_accounting_gap exceeds allowed threshold for 3 windows."
+
+  - name: observability_alerts_ingestor
+    interval: 30s
+    rules:
+      - alert: IngestorSinkUtilWarn
+        expr: max(ingestor_sink_buffer_usage_percent) >= 80
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor sink utilization high"
+          description: "sink_util_estimate_pct >= 80% for 3 windows."
+
+      - alert: IngestorSinkUtilError
+        expr: max(ingestor_sink_buffer_usage_percent) >= 95
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor sink utilization critical"
+          description: "sink_util_estimate_pct >= 95% for 6 windows."
+
+      - alert: IngestorEmitNonSerializedWarn
+        expr: ingestor:emit_non_serialized_ratio:rate1m >= 0.01
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor non-serialized emit ratio elevated"
+          description: "emit_non_serialized_rate >= 1.0% for 3 windows."
+
+      - alert: IngestorEmitNonSerializedError
+        expr: ingestor:emit_non_serialized_ratio:rate1m >= 0.05
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor non-serialized emit ratio critical"
+          description: "emit_non_serialized_rate >= 5.0% for 6 windows."
+
+      - alert: IngestorEmitOverflowWarn
+        expr: ingestor:emit_overflow_ratio:rate1m > 0
+        for: 20s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor overflow emits detected"
+          description: "emit_overflow_rate > 0 for 2 windows."
+
+      - alert: IngestorEmitOverflowError
+        expr: ingestor:emit_overflow_ratio:rate1m >= 0.02
+        for: 30s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor overflow emits critical"
+          description: "emit_overflow_rate >= 2.0% for 3 windows."
+
+      - alert: IngestorPipelineStalledWarn
+        expr: ingestor:events_received:rate1m > 0 and ingestor:events_processed:rate1m == 0
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor pipeline appears stalled"
+          description: "received > 0 but processed == 0 for 3 windows."
+
+      - alert: IngestorPipelineStalledError
+        expr: ingestor:events_received:rate1m > 0 and ingestor:events_processed:rate1m == 0
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor pipeline stalled persisted"
+          description: "received > 0 but processed == 0 for 6 windows."
+
+      - alert: IngestorThroughputDropWarn
+        expr: ingestor:events_processed:drop_ratio > 0.50
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor throughput dropped"
+          description: "events_per_sec dropped by >50% from baseline."
+
+      - alert: IngestorThroughputDropError
+        expr: ingestor:events_processed:drop_ratio > 0.80
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor throughput critically dropped"
+          description: "events_per_sec dropped by >80% from baseline."
+
+      - alert: IngestorKafkaBatchSendLatencyWarn
+        expr: ingestor:kafka_batch_send_seconds:p95 >= 0.3
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor Kafka ACK latency elevated"
+          description: "kafka_ack_ms_p95 >= 300ms for 3 windows."
+
+      - alert: IngestorKafkaBatchSendLatencyError
+        expr: ingestor:kafka_batch_send_seconds:p95 >= 1.0
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor Kafka ACK latency critical"
+          description: "kafka_ack_ms_p95 >= 1000ms for 6 windows."
+
+      - alert: IngestorInflightUtilWarn
+        expr: ingestor:kafka_inflight_utilization:ratio >= 0.80
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor Kafka inflight utilization high"
+          description: "records_inflight_util_pct >= 80% for 3 windows."
+
+      - alert: IngestorInflightUtilError
+        expr: ingestor:kafka_inflight_utilization:ratio >= 0.95
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor Kafka inflight utilization critical"
+          description: "records_inflight_util_pct >= 95% for 6 windows."
+
+      - alert: IngestorRetryAttemptRateWarn
+        expr: ingestor:retry_attempt_rate:rate1m >= 0.30
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor retry attempt rate elevated"
+          description: "retry_attempt_rate >= 0.3 for 3 windows."
+
+      - alert: IngestorRetryExhaustedError
+        expr: increase(ingestor_retry_exhausted_total[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor retry exhausted detected"
+          description: "retry_exhausted_delta_10s > 0."
+
+      - alert: IngestorDlqWriteError
+        expr: increase(ingestor_dlq_write_errors_total[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor DLQ write errors detected"
+          description: "dlq_write_error_delta_10s > 0."
+
+      - alert: IngestorHttp429RatioWarn
+        expr: ingestor:http_429_ratio:rate1m >= 0.05
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor HTTP 429 ratio elevated"
+          description: "http_429_ratio >= 5% for 3 windows."
+
+      - alert: IngestorHttp429RatioError
+        expr: ingestor:http_429_ratio:rate1m >= 0.20
+        for: 30s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor HTTP 429 ratio critical"
+          description: "http_429_ratio >= 20% for 3 windows."
+
+      - alert: IngestorHttp5xxRatioWarn
+        expr: ingestor:http_5xx_ratio:rate1m >= 0.01
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor HTTP 5xx ratio elevated"
+          description: "http_5xx_ratio >= 1% for 3 windows."
+
+      - alert: IngestorHttp5xxRatioError
+        expr: ingestor:http_5xx_ratio:rate1m >= 0.05
+        for: 30s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor HTTP 5xx ratio critical"
+          description: "http_5xx_ratio >= 5% for 3 windows."
+
+      - alert: IngestorHeapUsageWarn
+        expr: ingestor:heap_used_pct >= 85
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor heap usage high"
+          description: "heap_used_pct >= 85% for 3 windows."
+
+      - alert: IngestorHeapUsageError
+        expr: ingestor:heap_used_pct >= 92
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor heap usage critical"
+          description: "heap_used_pct >= 92% for 6 windows."
+
+      - alert: IngestorGcPauseWarn
+        expr: ingestor:gc_pause_seconds:p95 >= 0.2
+        for: 30s
+        labels:
+          severity: warning
+          component: ingestor
+        annotations:
+          summary: "Ingestor GC pause elevated"
+          description: "gc_pause_ms_p95 >= 200ms for 3 windows."
+
+      - alert: IngestorGcPauseError
+        expr: ingestor:gc_pause_seconds:p95 >= 0.5
+        for: 60s
+        labels:
+          severity: critical
+          component: ingestor
+        annotations:
+          summary: "Ingestor GC pause critical"
+          description: "gc_pause_ms_p95 >= 500ms for 6 windows."
+
+  - name: observability_alerts_kafka
+    interval: 30s
+    rules:
+      - alert: KafkaLagHigh
+        expr: kafka:lag_total > 100000
+        for: 10m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka consumer lag high"
+          description: "consumer_group_lag_total above 100k for 10m."
+
+      - alert: KafkaLagIncreasingPersistent
+        expr: kafka:lag_delta_10m > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka lag keeps increasing"
+          description: "consumer lag increased over 10m window persistently."
+
+      - alert: KafkaLeaderSkewWarn
+        expr: kafka:leader_skew_pct >= 25
+        for: 10m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka leader skew elevated"
+          description: "leader_skew_pct >= 25% for 10m."
+
+      - alert: KafkaLeaderSkewError
+        expr: kafka:leader_skew_pct >= 40
+        for: 10m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka leader skew critical"
+          description: "leader_skew_pct >= 40% for 10m."
+
+      - alert: KafkaUnderReplicatedWarn
+        expr: kafka:under_replicated_total > 0
+        for: 3m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka under-replicated partitions detected"
+          description: "under_replicated_partitions > 0 for 3m."
+
+      - alert: KafkaUnderReplicatedError
+        expr: kafka:under_replicated_total > 0
+        for: 10m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka under-replicated partitions persistent"
+          description: "under_replicated_partitions > 0 for 10m."
+
+      - alert: KafkaAtMinIsrWarn
+        expr: kafka:at_min_isr_total > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka partitions at min ISR"
+          description: "at_min_isr_partition_count > 0 for 5m."
+
+      - alert: KafkaNotEnoughReplicasError
+        expr: kafka:produce_not_enough_replicas_errors:rate1m > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka NOT_ENOUGH_REPLICAS errors detected"
+          description: "produce_not_enough_replicas_error_rate > 0 for 1m."
+
+      - alert: KafkaRequestHandlerIdleWarn
+        expr: kafka:request_handler_idle_pct:avg < 20
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka request handler idle low"
+          description: "request_handler_avg_idle_pct < 20% for 5m."
+
+      - alert: KafkaRequestHandlerIdleError
+        expr: kafka:request_handler_idle_pct:avg < 10 and delta(kafka:request_queue_size:max[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka broker queue pressure critical"
+          description: "request_handler_avg_idle_pct < 10% and queue size increasing for 5m."
+
+      - alert: KafkaProduceLatencyWarn
+        expr: kafka:produce_total_time_ms:p95 >= 100
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka produce latency elevated"
+          description: "produce_request_total_time_ms_p95 >= 100ms for 5m."
+
+      - alert: KafkaProduceLatencyError
+        expr: kafka:produce_total_time_ms:p95 >= 250
+        for: 5m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka produce latency critical"
+          description: "produce_request_total_time_ms_p95 >= 250ms for 5m."
+
+      - alert: KafkaDiskUsedWarn
+        expr: kafka:broker_disk_used_pct:max >= 80
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka broker disk usage high"
+          description: "broker_disk_used_pct >= 80%."
+
+      - alert: KafkaDiskUsedError
+        expr: kafka:broker_disk_used_pct:max >= 90
+        for: 5m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka broker disk usage critical"
+          description: "broker_disk_used_pct >= 90%."
+
+      - alert: KafkaDiskIoUtilWarn
+        expr: kafka:broker_disk_io_util_pct:max >= 85
+        for: 10m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka broker disk IO utilization high"
+          description: "broker_disk_io_util_pct >= 85% for 10m."
+
+      - alert: KafkaControllerElectionBurst
+        expr: kafka:controller_election_count:delta10m >= 3
+        for: 1m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka controller election burst detected"
+          description: "controller_election_count_delta_10m >= 3."
+
+  - name: observability_alerts_nginx
+    interval: 30s
+    rules:
+      - alert: NginxStatus5xxWarn
+        expr: nginx:status_5xx_ratio:rate1m >= 0.01
+        for: 3m
+        labels:
+          severity: warning
+          component: nginx
+        annotations:
+          summary: "Nginx 5xx ratio elevated"
+          description: "status_5xx_rate >= 1% for 3m."
+
+      - alert: NginxStatus5xxError
+        expr: nginx:status_5xx_ratio:rate1m >= 0.03
+        for: 1m
+        labels:
+          severity: critical
+          component: nginx
+        annotations:
+          summary: "Nginx 5xx ratio critical"
+          description: "status_5xx_rate >= 3% for 1m."
+
+      - alert: NginxStatus499Warn
+        expr: nginx:status_499_ratio:rate1m >= 0.03
+        for: 5m
+        labels:
+          severity: warning
+          component: nginx
+        annotations:
+          summary: "Nginx 499 ratio elevated"
+          description: "status_499_rate >= 3% for 5m."
+
+      - alert: NginxTimeoutReadWarn
+        expr: nginx:timeout_read:rate10s * 10 >= 30
+        for: 30s
+        labels:
+          severity: warning
+          component: nginx
+        annotations:
+          summary: "Nginx upstream read timeout spike"
+          description: "timeout_read_count >= 30/10s for consecutive windows."
+
+      - alert: NginxRetryInvokedWarn
+        expr: nginx:retry_invoked_ratio:rate5m >= 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: nginx
+        annotations:
+          summary: "Nginx retry invoked ratio elevated"
+          description: "retry_invoked_rate >= 5% for 5m."
+
+      - alert: NginxRetryExhaustedError
+        expr: nginx:retry_exhausted_ratio:rate5m >= 0.01
+        for: 3m
+        labels:
+          severity: critical
+          component: nginx
+        annotations:
+          summary: "Nginx retry exhausted ratio critical"
+          description: "retry_exhausted_rate >= 1% for 3m."
+
+      - alert: NginxRetrySuccessLowWarn
+        expr: nginx:retry_success_ratio:rate5m < 0.70
+        for: 5m
+        labels:
+          severity: warning
+          component: nginx
+        annotations:
+          summary: "Nginx retry success ratio low"
+          description: "retry_success_rate < 70% for 5m."
+
+      - alert: NginxUpstreamShareSkewWarn
+        expr: nginx:upstream_1_share_pct:rate5m >= 60 or nginx:upstream_2_share_pct:rate5m >= 60 or nginx:upstream_3_share_pct:rate5m >= 60
+        for: 5m
+        labels:
+          severity: warning
+          component: nginx
+        annotations:
+          summary: "Nginx upstream distribution skewed"
+          description: "upstream share >= 60% for 5m."
+
+      - alert: NginxUpstreamShareZeroError
+        expr: (nginx:upstream_1_share_pct:rate5m == 0 or nginx:upstream_2_share_pct:rate5m == 0 or nginx:upstream_3_share_pct:rate5m == 0) and nginx:rps:rate1m > 100
+        for: 1m
+        labels:
+          severity: critical
+          component: nginx
+        annotations:
+          summary: "Nginx upstream received zero traffic"
+          description: "one upstream share == 0% while rps > 100."
+
+      - alert: NginxDownstreamGapWarn
+        expr: nginx:downstream_gap_ms:p95 >= 500
+        for: 5m
+        labels:
+          severity: warning
+          component: nginx
+        annotations:
+          summary: "Nginx downstream gap elevated"
+          description: "downstream_gap_ms_p95 >= 500ms for 5m."
+
+      - alert: NginxDownstreamGapError
+        expr: nginx:downstream_gap_ms:p95 >= 2000
+        for: 2m
+        labels:
+          severity: critical
+          component: nginx
+        annotations:
+          summary: "Nginx downstream gap critical"
+          description: "downstream_gap_ms_p95 >= 2000ms for 2m."
+
+  - name: observability_alerts_flink
+    interval: 30s
+    rules:
+      - alert: FlinkCheckpointAgeWarn
+        expr: flink:last_completed_checkpoint_age_sec > 2 * clamp_min(max(flink_checkpoint_interval_sec), 1)
+        for: 30s
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink checkpoint age elevated"
+          description: "last_completed_checkpoint_age_sec > 2 * checkpoint_interval_sec for 3 windows."
+
+      - alert: FlinkOperatorBackpressureWarn
+        expr: flink:operator_backpressured_time_pct:max > 20
+        for: 5m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink operator backpressure high"
+          description: "operator_backpressured_time_pct > 20% for 5m."
+
+      - alert: FlinkOperatorSubtaskSkewWarn
+        expr: flink:operator_subtask_skew_ratio:max > 2.5
+        for: 10m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink operator subtask skew high"
+          description: "operator_subtask_skew_ratio > 2.5 for 10m."
+
+      - alert: FlinkDlqRatioWarn
+        expr: flink:dlq_ratio:rate1m > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink DLQ ratio elevated"
+          description: "dlq_ratio > 1% for 10m."
+
+      - alert: FlinkDataBalanceGapWarn
+        expr: flink:data_balance_gap_ratio:max > 0.005
+        for: 5m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink data balance gap elevated"
+          description: "data_balance_gap_ratio > 0.5% for 5m."
+
+      - alert: FlinkDataBalanceGapError
+        expr: flink:data_balance_gap_ratio:max > 0.02
+        for: 0m
+        labels:
+          severity: critical
+          component: flink
+        annotations:
+          summary: "Flink data balance gap critical"
+          description: "data_balance_gap_ratio > 2% immediately."
+
+      - alert: FlinkConsumerLagIncreasingWarn
+        expr: flink:consumer_lag_delta_10m > 0 and flink:source_records_in:rate1m < clamp_min(avg_over_time(flink:source_records_in:rate1m[5m]), 1)
+        for: 10m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink consumer lag increasing with throughput degradation"
+          description: "consumer_lag_total increasing while source_records_per_sec is degraded."
+
+      - alert: FlinkWatermarkStallWarn
+        expr: flink:watermark_stall_sec:max > 120 and flink:source_records_in:rate1m > 0
+        for: 30s
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink watermark stall detected"
+          description: "watermark_stall_sec > 120 while source input exists."
+
+      - alert: FlinkWatermarkLagWarn
+        expr: flink:watermark_lag_ms:max > 30000
+        for: 10m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink watermark lag elevated"
+          description: "watermark_lag_ms > 30000 for 10m."
+
+      - alert: FlinkJdbcFlushLatencyWarn
+        expr: flink:jdbc_flush_latency_ms:p95 > 5000
+        for: 10m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink JDBC flush latency high"
+          description: "jdbc_flush_latency_ms_p95 > 5000 for 10m."
+
+      - alert: FlinkCheckpointAlignmentWarn
+        expr: flink:checkpoint_alignment_ms:p95 > 10000
+        for: 5m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink checkpoint alignment latency high"
+          description: "checkpoint_alignment_ms_p95 > 10000 for 5m."
+
+      - alert: FlinkDlqWriteError
+        expr: flink:dlq_write_errors:rate1m > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: flink
+        annotations:
+          summary: "Flink DLQ write errors detected"
+          description: "dlq_write_error_delta_10s > 0."
+
+      - alert: FlinkRestartSameFailureError
+        expr: max(flink_job_restart_same_failure_count_10m) >= 3
+        for: 0m
+        labels:
+          severity: critical
+          component: flink
+        annotations:
+          summary: "Flink repeated restart on same failure class"
+          description: "same last_failure_exception_class + stage restarted >=3/10m."
+
+      - alert: FlinkPredictionPathStallWarn
+        expr: flink:demand_rows_in:rate1m > 0 and flink:prediction_rows_out:rate1m == 0
+        for: 20m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink prediction path stalled"
+          description: "demand_rows_in > 0 while prediction_rows_out == 0 for 20m."
+
+      - alert: FlinkOnnxInferError
+        expr: flink:onnx_infer_errors:rate1m > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: flink
+        annotations:
+          summary: "Flink ONNX inference errors detected"
+          description: "onnx_infer_error_delta_10s > 0."
+
+      - alert: FlinkE2ELatencyP95Warn
+        expr: flink:e2e_latency_ms:p95 > 60000
+        for: 10m
+        labels:
+          severity: warning
+          component: flink
+        annotations:
+          summary: "Flink end-to-end latency p95 elevated"
+          description: "e2e_latency_ms_p95 > 60000 for 10m."
+
+      - alert: FlinkE2ELatencyP99Error
+        expr: flink:e2e_latency_ms:p99 > 120000
+        for: 5m
+        labels:
+          severity: critical
+          component: flink
+        annotations:
+          summary: "Flink end-to-end latency p99 critical"
+          description: "e2e_latency_ms_p99 > 120000 for 5m."
+
+  - name: observability_alerts_clickhouse
+    interval: 30s
+    rules:
+      - alert: ClickHousePartsHighWarn
+        expr: clickhouse:parts_active:max >= 1500 and clickhouse:insert_query_count:delta10s > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse active parts high"
+          description: "active_parts_total >= 1500 for 5m with insert traffic guard."
+
+      - alert: ClickHousePartsHighError
+        expr: clickhouse:parts_active:max >= 3500
+        for: 0m
+        labels:
+          severity: critical
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse active parts critical"
+          description: "active_parts_total >= 3500."
+
+      - alert: ClickHouseMergeCatchupLowWarn
+        expr: clickhouse:parts_active:max >= 1500 and clickhouse:merge_rows_per_sec:rate5m < 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse merge catch-up speed low"
+          description: "active_parts high while merge_rows_per_sec remains low for 10m."
+
+      - alert: ClickHouseLatestDupGroupsWarn
+        expr: clickhouse:latest_dup_groups_total > 0 and clickhouse:raw_rows_delta_10s > 0
+        for: 20s
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse latest dedup anomaly"
+          description: "latest_dup_groups_* > 0 for consecutive windows with raw input guard."
+
+      - alert: ClickHouseInsertErrorsError
+        expr: clickhouse:insert_error:delta10s > 0
+        for: 30s
+        labels:
+          severity: critical
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse insert errors detected"
+          description: "insert_error_delta_10s > 0 for consecutive windows."
+
+      - alert: ClickHouseInsertLatencyWarn
+        expr: clickhouse:insert_latency_ms:p95 > 1000 and clickhouse:insert_query_count:delta10s >= 5
+        for: 10m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse insert latency elevated"
+          description: "insert_latency_ms_p95 > 1000ms for 10m with insert traffic guard."
+
+      - alert: ClickHouseServingFreshnessWarn
+        expr: clickhouse:serving_latest_event_age_sec > 120 and clickhouse:raw_rows_delta_10s > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse serving freshness lagging"
+          description: "serving_latest_event_age_sec > 120 for 10m with raw input guard."
+
+      - alert: ClickHouseIngestToServingLagWarn
+        expr: clickhouse:ingest_to_serving_lag_sec > 60
+        for: 10m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse ingest-to-serving lag elevated"
+          description: "ingest_to_serving_lag_sec > 60 for 10m."
+
+      - alert: ClickHouseQueryLatencyWarn
+        expr: clickhouse:query_p95_latest_ms > 500 and clickhouse:select_count:delta1m > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse query p95 elevated"
+          description: "q_p95_latest_ms > 500 for 10m with select traffic guard."
+
+      - alert: ClickHouseReadAmplificationWarn
+        expr: clickhouse:read_amp_ratio > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse read amplification high"
+          description: "read_amp_ratio > 100 for 10m."
+
+      - alert: ClickHouseDiskUsedWarn
+        expr: clickhouse:disk_used_pct >= 80
+        for: 5m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse disk usage high"
+          description: "disk_used_pct >= 80%."
+
+      - alert: ClickHouseDiskUsedError
+        expr: clickhouse:disk_used_pct >= 90
+        for: 5m
+        labels:
+          severity: critical
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse disk usage critical"
+          description: "disk_used_pct >= 90%."
+
+      - alert: ClickHouseDaysToFullWarn
+        expr: clickhouse:days_to_full < 7
+        for: 5m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse days-to-full warning"
+          description: "days_to_full < 7."
+
+      - alert: ClickHouseDaysToFullError
+        expr: clickhouse:days_to_full < 3
+        for: 5m
+        labels:
+          severity: critical
+          component: clickhouse
+        annotations:
+          summary: "ClickHouse days-to-full critical"
+          description: "days_to_full < 3."

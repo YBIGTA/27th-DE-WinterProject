@@ -13,6 +13,19 @@ services:
       - kafka-network
     restart: unless-stopped
 
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.4.2
+    container_name: nginx-exporter
+    command:
+      - -nginx.scrape-uri=http://ingestor-lb/nginx_status
+    ports:
+      - "${NGINX_EXPORTER_PORT:-9113}:9113"
+    depends_on:
+      - nginx-lb
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
 
   promtail:
     image: grafana/promtail:3.3.2
@@ -27,6 +40,7 @@ services:
     command: -config.file=/etc/promtail/config.yml -config.expand-env=true
     depends_on:
       - nginx-lb
+      - nginx-exporter
     networks:
       - kafka-network
 

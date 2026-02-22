@@ -33,3 +33,6 @@ dlq:
 batch:
   size: 200
   timeout_ms: 100
+
+metrics:
+  port: 9108

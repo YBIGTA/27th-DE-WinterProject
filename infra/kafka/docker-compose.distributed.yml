@@ -30,6 +30,9 @@ services:
       KAFKA_LOG_RETENTION_HOURS: 24
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
       KAFKA_NUM_PARTITIONS: 12
+      KAFKA_JMX_PORT: 9999
+      KAFKA_JMX_HOSTNAME: kafka-1
+      KAFKA_JMX_OPTS: "-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka-1 -Dcom.sun.management.jmxremote.rmi.port=9999"
     volumes:
       - kafka1-data:/var/lib/kafka/data
     networks:
@@ -75,6 +78,9 @@ services:
       KAFKA_LOG_RETENTION_HOURS: 24
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
       KAFKA_NUM_PARTITIONS: 12
+      KAFKA_JMX_PORT: 9999
+      KAFKA_JMX_HOSTNAME: kafka-2
+      KAFKA_JMX_OPTS: "-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka-2 -Dcom.sun.management.jmxremote.rmi.port=9999"
     volumes:
       - kafka2-data:/var/lib/kafka/data
     networks:
@@ -120,6 +126,9 @@ services:
       KAFKA_LOG_RETENTION_HOURS: 24
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
       KAFKA_NUM_PARTITIONS: 12
+      KAFKA_JMX_PORT: 9999
+      KAFKA_JMX_HOSTNAME: kafka-3
+      KAFKA_JMX_OPTS: "-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka-3 -Dcom.sun.management.jmxremote.rmi.port=9999"
     volumes:
       - kafka3-data:/var/lib/kafka/data
     networks:
@@ -133,6 +142,66 @@ services:
       timeout: 5s
       retries: 15
       start_period: 40s
+
+  jmx-exporter-kafka-1:
+    image: bitnami/jmx-exporter:latest
+    container_name: jmx-exporter-kafka-1
+    ports:
+      - "${KAFKA_1_JMX_EXPORTER_PORT:-9404}:5556"
+    environment:
+      JMX_HOSTPORT: "kafka-1:9999"
+    volumes:
+      - ./jmx-exporter/kafka-kraft-3_0_0-rules.yml:/etc/jmx-exporter/kafka-kraft-3_0_0-rules.yml:ro
+    entrypoint: ["/bin/sh", "-lc"]
+    command: >
+      printf 'hostPort: %s\n\n' "$$JMX_HOSTPORT" > /tmp/kafka-jmx.yml &&
+      cat /etc/jmx-exporter/kafka-kraft-3_0_0-rules.yml >> /tmp/kafka-jmx.yml &&
+      exec java -jar jmx_prometheus_standalone.jar 5556 /tmp/kafka-jmx.yml
+    depends_on:
+      kafka-1:
+        condition: service_started
+    networks:
+      - kafka-network
+
+  jmx-exporter-kafka-2:
+    image: bitnami/jmx-exporter:latest
+    container_name: jmx-exporter-kafka-2
+    ports:
+      - "${KAFKA_2_JMX_EXPORTER_PORT:-9405}:5556"
+    environment:
+      JMX_HOSTPORT: "kafka-2:9999"
+    volumes:
+      - ./jmx-exporter/kafka-kraft-3_0_0-rules.yml:/etc/jmx-exporter/kafka-kraft-3_0_0-rules.yml:ro
+    entrypoint: ["/bin/sh", "-lc"]
+    command: >
+      printf 'hostPort: %s\n\n' "$$JMX_HOSTPORT" > /tmp/kafka-jmx.yml &&
+      cat /etc/jmx-exporter/kafka-kraft-3_0_0-rules.yml >> /tmp/kafka-jmx.yml &&
+      exec java -jar jmx_prometheus_standalone.jar 5556 /tmp/kafka-jmx.yml
+    depends_on:
+      kafka-2:
+        condition: service_started
+    networks:
+      - kafka-network
+
+  jmx-exporter-kafka-3:
+    image: bitnami/jmx-exporter:latest
+    container_name: jmx-exporter-kafka-3
+    ports:
+      - "${KAFKA_3_JMX_EXPORTER_PORT:-9406}:5556"
+    environment:
+      JMX_HOSTPORT: "kafka-3:9999"
+    volumes:
+      - ./jmx-exporter/kafka-kraft-3_0_0-rules.yml:/etc/jmx-exporter/kafka-kraft-3_0_0-rules.yml:ro
+    entrypoint: ["/bin/sh", "-lc"]
+    command: >
+      printf 'hostPort: %s\n\n' "$$JMX_HOSTPORT" > /tmp/kafka-jmx.yml &&
+      cat /etc/jmx-exporter/kafka-kraft-3_0_0-rules.yml >> /tmp/kafka-jmx.yml &&
+      exec java -jar jmx_prometheus_standalone.jar 5556 /tmp/kafka-jmx.yml
+    depends_on:
+      kafka-3:
+        condition: service_started
+    networks:
+      - kafka-network
 
   kafka-topic-init:
     image: confluentinc/cp-kafka:7.5.0

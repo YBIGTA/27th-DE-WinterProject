@@ -22,7 +22,7 @@ public class DeadLetterQueue {
         log.info("[DLQ] Dead letter queue initialized: path={}", filePath);
     }
 
-    public synchronized void write(TaxiEvent event, Exception error) {
+    public synchronized boolean write(TaxiEvent event, Exception error) {
         try {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
@@ -45,9 +45,11 @@ public class DeadLetterQueue {
 
             log.debug("[DLQ] Event written to dead letter queue: trip_id={}, error={}",
                       event.getTripId(), error.getClass().getSimpleName());
+            return true;
         } catch (IOException e) {
             log.error("[DLQ] Failed to write to dead letter queue: trip_id={}",
                       event.getTripId(), e);
+            return false;
         }
     }
 

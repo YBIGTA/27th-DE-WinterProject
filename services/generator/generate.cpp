@@ -18,15 +18,19 @@
 #include <unordered_map>
 #include <cmath>
 #include <algorithm>
+#include <array>
 #include <sstream>
 #include <iomanip>
 #include <random>
+#include <limits>
 #include <filesystem>
 #include <memory>
 #include <fstream>
 #include <cctype>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <ctime>
@@ -41,8 +45,11 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <netdb.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/time.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #endif
 
@@ -221,6 +228,181 @@ public:
     }
 };
 
+template <size_t N>
+class PrometheusHistogram {
+private:
+    std::array<double, N> bounds_;
+    std::array<std::atomic<uint64_t>, N> buckets_;
+    std::atomic<uint64_t> count_{0};
+    std::atomic<int64_t> sum_us_{0};
+
+    static string format_bound(double value) {
+        if (std::isinf(value)) return "+Inf";
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(6) << value;
+        string out = oss.str();
+        while (!out.empty() && out.back() == '0') out.pop_back();
+        if (!out.empty() && out.back() == '.') out.pop_back();
+        return out.empty() ? "0" : out;
+    }
+
+public:
+    explicit PrometheusHistogram(const std::array<double, N>& bounds)
+        : bounds_(bounds) {
+        for (auto& bucket : buckets_) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+    }
+
+    void observe_seconds(double value_seconds) {
+        if (value_seconds < 0) value_seconds = 0;
+        count_.fetch_add(1, std::memory_order_relaxed);
+        sum_us_.fetch_add(static_cast<int64_t>(value_seconds * 1000000.0), std::memory_order_relaxed);
+        for (size_t i = 0; i < N; ++i) {
+            if (value_seconds <= bounds_[i]) {
+                buckets_[i].fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    void append_prometheus(std::ostringstream& oss, const string& name, const string& help) const {
+        oss << "# HELP " << name << " " << help << "\n";
+        oss << "# TYPE " << name << " histogram\n";
+        for (size_t i = 0; i < N; ++i) {
+            oss << name << "_bucket{le=\"" << format_bound(bounds_[i]) << "\"} "
+                << buckets_[i].load(std::memory_order_relaxed) << "\n";
+        }
+        oss << name << "_sum " << (static_cast<double>(sum_us_.load(std::memory_order_relaxed)) / 1000000.0) << "\n";
+        oss << name << "_count " << count_.load(std::memory_order_relaxed) << "\n";
+    }
+};
+
+#if defined(__unix__) || defined(__APPLE__)
+class MetricsHttpServer {
+private:
+    int port_;
+    std::function<string()> renderer_;
+    std::atomic<bool> running_{false};
+    std::thread server_thread_;
+    int listen_fd_ = -1;
+
+    static void close_fd(int& fd) {
+        if (fd >= 0) {
+            close(fd);
+            fd = -1;
+        }
+    }
+
+    static bool is_metrics_path(const string& request) {
+        return request.rfind("GET /metrics ", 0) == 0 || request.rfind("GET /metrics?", 0) == 0;
+    }
+
+    static void send_response(int client_fd, const string& status_line, const string& body) {
+        std::ostringstream response;
+        response << status_line << "\r\n";
+        response << "Content-Type: text/plain; version=0.0.4\r\n";
+        response << "Content-Length: " << body.size() << "\r\n";
+        response << "Connection: close\r\n\r\n";
+        response << body;
+        string payload = response.str();
+        send(client_fd, payload.data(), payload.size(), 0);
+    }
+
+    void loop() {
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) {
+            std::cerr << "[METRICS] socket() failed: " << std::strerror(errno) << std::endl;
+            return;
+        }
+
+        int reuse = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(static_cast<uint16_t>(port_));
+        if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+            std::cerr << "[METRICS] bind() failed on :" << port_ << " - " << std::strerror(errno) << std::endl;
+            close_fd(fd);
+            return;
+        }
+        if (listen(fd, 32) != 0) {
+            std::cerr << "[METRICS] listen() failed on :" << port_ << " - " << std::strerror(errno) << std::endl;
+            close_fd(fd);
+            return;
+        }
+
+        listen_fd_ = fd;
+
+        while (running_.load(std::memory_order_acquire)) {
+            fd_set read_set;
+            FD_ZERO(&read_set);
+            FD_SET(fd, &read_set);
+
+            timeval tv{};
+            tv.tv_sec = 1;
+            tv.tv_usec = 0;
+            int ready = select(fd + 1, &read_set, nullptr, nullptr, &tv);
+            if (ready <= 0) continue;
+
+            sockaddr_in client_addr{};
+            socklen_t client_len = sizeof(client_addr);
+            int client_fd = accept(fd, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+            if (client_fd < 0) continue;
+
+            char buffer[4096];
+            ssize_t received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+            string request;
+            if (received > 0) {
+                buffer[received] = '\0';
+                request.assign(buffer, static_cast<size_t>(received));
+            }
+
+            if (is_metrics_path(request)) {
+                string body = renderer_();
+                send_response(client_fd, "HTTP/1.1 200 OK", body);
+            } else {
+                send_response(client_fd, "HTTP/1.1 404 Not Found", "not found\n");
+            }
+
+            close(client_fd);
+        }
+
+        close_fd(fd);
+        listen_fd_ = -1;
+    }
+
+public:
+    MetricsHttpServer(int port, std::function<string()> renderer)
+        : port_(port), renderer_(std::move(renderer)) {}
+
+    void start() {
+        if (running_.exchange(true, std::memory_order_acq_rel)) return;
+        server_thread_ = std::thread([this]() { loop(); });
+    }
+
+    void stop() {
+        if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+        close_fd(listen_fd_);
+        if (server_thread_.joinable()) {
+            server_thread_.join();
+        }
+    }
+
+    ~MetricsHttpServer() {
+        stop();
+    }
+};
+#else
+class MetricsHttpServer {
+public:
+    MetricsHttpServer(int, std::function<string()>) {}
+    void start() {}
+    void stop() {}
+};
+#endif
+
 struct DateRange {
     int start_year;
     int start_month;
@@ -259,6 +441,9 @@ struct SimulationConfig {
     // Batching config
     size_t batch_size = 200;
     int64_t batch_timeout_ms = 100;
+
+    // Prometheus metrics config
+    int metrics_port = 9108;
 };
 
 static string trim_copy(const string& value) {
@@ -435,6 +620,8 @@ static void apply_config_value(SimulationConfig& config, const string& raw_key, 
         try { config.batch_size = stoull(value); } catch (...) {}
     } else if (key == "batch_timeout_ms" || key == "batch.timeout_ms") {
         try { config.batch_timeout_ms = stoll(value); } catch (...) {}
+    } else if (key == "metrics_port" || key == "metrics.port") {
+        try { config.metrics_port = stoi(value); } catch (...) {}
     }
 }
 
@@ -451,6 +638,19 @@ static string resolve_ingestion_url_from_env() {
     return "";
 }
 
+static void apply_metrics_port_from_env(SimulationConfig& config) {
+    const char* env_port = getenv("GENERATOR_METRICS_PORT");
+    if (!env_port || !*env_port) return;
+    try {
+        int parsed = stoi(env_port);
+        if (parsed > 0 && parsed <= 65535) {
+            config.metrics_port = parsed;
+        }
+    } catch (...) {
+        // Ignore invalid env values; keep configured/default port.
+    }
+}
+
 static SimulationConfig load_config(const string& path) {
     // Load .env file first
     load_env_file(DEFAULT_ENV_PATH);
@@ -461,6 +661,7 @@ static SimulationConfig load_config(const string& path) {
         cerr << "[Config] Using defaults (file not found: " << path << ")" << endl;
         string env_url = resolve_ingestion_url_from_env();
         if (!env_url.empty()) config.ingestion_url = env_url;
+        apply_metrics_port_from_env(config);
         return config;
     }
 
@@ -485,6 +686,7 @@ static SimulationConfig load_config(const string& path) {
 
     string env_url = resolve_ingestion_url_from_env();
     if (!env_url.empty()) config.ingestion_url = env_url;
+    apply_metrics_port_from_env(config);
 
     return config;
 }
@@ -499,6 +701,7 @@ public:
         not_full_.wait(lock, [&] { return closed_ || queue_.size() < capacity_; });
         if (closed_) return false;
         queue_.push_back(std::move(item));
+        size_.fetch_add(1, std::memory_order_relaxed);
         not_empty_.notify_one();
         return true;
     }
@@ -509,6 +712,7 @@ public:
         if (queue_.empty()) return false;
         out = std::move(queue_.front());
         queue_.pop_front();
+        size_.fetch_sub(1, std::memory_order_relaxed);
         not_full_.notify_one();
         return true;
     }
@@ -520,9 +724,18 @@ public:
         not_full_.notify_all();
     }
 
+    size_t size() const {
+        return size_.load(std::memory_order_relaxed);
+    }
+
+    size_t capacity() const {
+        return capacity_;
+    }
+
 private:
     size_t capacity_;
     deque<T> queue_;
+    std::atomic<size_t> size_{0};
     mutex mu_;
     condition_variable not_full_;
     condition_variable not_empty_;
@@ -1347,15 +1560,38 @@ private:
     bool debug_timing = false;
     mutex log_mu;
     mutex ingest_mu;
+    int metrics_port = 9108;
     
     const int64_t TRANSIT_UPDATE_INTERVAL_US = 30 * 1000000; // 30 seconds
     const size_t PAYLOAD_QUEUE_CAPACITY = 4096;
 
     // Statistics
-    atomic<size_t> events_sent{0};
+    atomic<size_t> events_scheduled{0};
+    atomic<size_t> events_sent_success_total{0};
     atomic<size_t> pickup_count{0};
     atomic<size_t> transit_count{0};
     atomic<size_t> dropoff_count{0};
+    atomic<size_t> event_queue_remaining{0};
+    atomic<size_t> sender_threads_active{0};
+
+    // HTTP / retry path counters
+    atomic<size_t> http_requests_total{0};
+    atomic<size_t> http_status_2xx_total{0};
+    atomic<size_t> http_status_4xx_non429_total{0};
+    atomic<size_t> http_status_429_total{0};
+    atomic<size_t> http_status_5xx_total{0};
+    atomic<size_t> http_status_0_total{0};
+    atomic<size_t> requeue_enqueued_total{0};
+    atomic<size_t> requeue_dequeued_total{0};
+    atomic<size_t> retry_exhausted_total{0};
+    atomic<size_t> dropped_non_retryable_total{0};
+
+    PrometheusHistogram<12> http_request_duration_hist{
+        std::array<double, 12>{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, std::numeric_limits<double>::infinity()}
+    };
+    PrometheusHistogram<11> batch_wait_duration_hist{
+        std::array<double, 11>{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, std::numeric_limits<double>::infinity()}
+    };
 
     // Resilience configuration
     double rate_limit_threshold;
@@ -1377,6 +1613,7 @@ public:
         : playback_speed(config.playback_speed),
           ingestion_url(config.ingestion_url),
           debug_timing(config.debug_timing),
+          metrics_port(config.metrics_port),
           rate_limit_threshold(config.rate_limit_threshold),
           rate_limit_max_delay_ms(config.rate_limit_max_delay_ms),
           circuit_breaker_threshold(config.circuit_breaker_threshold),
@@ -1416,6 +1653,162 @@ public:
         }
     }
 
+    void observe_http_result(int status_code, size_t events_in_request, double request_duration_seconds) {
+        http_requests_total.fetch_add(1, memory_order_relaxed);
+        http_request_duration_hist.observe_seconds(request_duration_seconds);
+
+        if (status_code == 0) {
+            http_status_0_total.fetch_add(1, memory_order_relaxed);
+            return;
+        }
+        if (status_code == 429) {
+            http_status_429_total.fetch_add(1, memory_order_relaxed);
+            return;
+        }
+        if (status_code >= 500) {
+            http_status_5xx_total.fetch_add(1, memory_order_relaxed);
+            return;
+        }
+        if (status_code >= 400) {
+            http_status_4xx_non429_total.fetch_add(1, memory_order_relaxed);
+            return;
+        }
+        if (status_code >= 200 && status_code < 300) {
+            http_status_2xx_total.fetch_add(1, memory_order_relaxed);
+            events_sent_success_total.fetch_add(events_in_request, memory_order_relaxed);
+        }
+    }
+
+    static int circuit_state_to_number(CircuitBreaker::State state) {
+        if (state == CircuitBreaker::State::HALF_OPEN) return 1;
+        if (state == CircuitBreaker::State::OPEN) return 2;
+        return 0;
+    }
+
+    string render_prometheus_metrics(const BoundedQueue<PayloadWithRetry>& payload_queue,
+                                     const BoundedQueue<PayloadWithRetry>& requeue,
+                                     const RateLimiter& rate_limiter,
+                                     const CircuitBreaker& circuit_breaker,
+                                     const DeadLetterQueue& dlq) const {
+        const double payload_util = payload_queue.capacity() > 0
+            ? static_cast<double>(payload_queue.size()) / static_cast<double>(payload_queue.capacity())
+            : 0.0;
+        const double requeue_util = requeue.capacity() > 0
+            ? static_cast<double>(requeue.size()) / static_cast<double>(requeue.capacity())
+            : 0.0;
+        const int cb_state = circuit_state_to_number(circuit_breaker.get_state());
+
+        std::ostringstream oss;
+        oss << "# HELP generator_events_scheduled_total Total events scheduled into payload queue.\n";
+        oss << "# TYPE generator_events_scheduled_total counter\n";
+        oss << "generator_events_scheduled_total " << events_scheduled.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_events_sent_success_total Total events successfully delivered (HTTP 2xx).\n";
+        oss << "# TYPE generator_events_sent_success_total counter\n";
+        oss << "generator_events_sent_success_total " << events_sent_success_total.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_batches_sent_total Total successful batches delivered.\n";
+        oss << "# TYPE generator_batches_sent_total counter\n";
+        oss << "generator_batches_sent_total " << batch_metrics.get_total_batches() << "\n";
+
+        oss << "# HELP generator_http_requests_total HTTP requests by response class.\n";
+        oss << "# TYPE generator_http_requests_total counter\n";
+        oss << "generator_http_requests_total{code_class=\"2xx\"} " << http_status_2xx_total.load(memory_order_relaxed) << "\n";
+        oss << "generator_http_requests_total{code_class=\"4xx_non429\"} " << http_status_4xx_non429_total.load(memory_order_relaxed) << "\n";
+        oss << "generator_http_requests_total{code_class=\"429\"} " << http_status_429_total.load(memory_order_relaxed) << "\n";
+        oss << "generator_http_requests_total{code_class=\"5xx\"} " << http_status_5xx_total.load(memory_order_relaxed) << "\n";
+        oss << "generator_http_requests_total{code_class=\"socket_error\"} " << http_status_0_total.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_http_socket_errors_total Total socket/connect/read failures.\n";
+        oss << "# TYPE generator_http_socket_errors_total counter\n";
+        oss << "generator_http_socket_errors_total " << http_status_0_total.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_requeue_enqueued_total Total retryable events enqueued to requeue.\n";
+        oss << "# TYPE generator_requeue_enqueued_total counter\n";
+        oss << "generator_requeue_enqueued_total " << requeue_enqueued_total.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_requeue_dequeued_total Total events dequeued from requeue.\n";
+        oss << "# TYPE generator_requeue_dequeued_total counter\n";
+        oss << "generator_requeue_dequeued_total " << requeue_dequeued_total.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_retry_exhausted_total Total events exhausted retries.\n";
+        oss << "# TYPE generator_retry_exhausted_total counter\n";
+        oss << "generator_retry_exhausted_total " << retry_exhausted_total.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_dlq_writes_total Total events written to DLQ.\n";
+        oss << "# TYPE generator_dlq_writes_total counter\n";
+        oss << "generator_dlq_writes_total " << dlq.get_total_written() << "\n";
+
+        oss << "# HELP generator_dropped_non_retryable_total Total non-retryable client errors dropped.\n";
+        oss << "# TYPE generator_dropped_non_retryable_total counter\n";
+        oss << "generator_dropped_non_retryable_total " << dropped_non_retryable_total.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_rate_limit_429_total Total HTTP 429 responses observed by rate limiter.\n";
+        oss << "# TYPE generator_rate_limit_429_total counter\n";
+        oss << "generator_rate_limit_429_total " << rate_limiter.get_total_429s() << "\n";
+
+        oss << "# HELP generator_cb_trips_total Total circuit breaker trips.\n";
+        oss << "# TYPE generator_cb_trips_total counter\n";
+        oss << "generator_cb_trips_total " << circuit_breaker.get_total_trips() << "\n";
+
+        oss << "# HELP generator_cb_rejects_total Total requests rejected by circuit breaker.\n";
+        oss << "# TYPE generator_cb_rejects_total counter\n";
+        oss << "generator_cb_rejects_total " << circuit_breaker.get_total_rejects() << "\n";
+
+        oss << "# HELP generator_event_queue_remaining Remaining events in scheduler queue.\n";
+        oss << "# TYPE generator_event_queue_remaining gauge\n";
+        oss << "generator_event_queue_remaining " << event_queue_remaining.load(memory_order_relaxed) << "\n";
+
+        oss << "# HELP generator_payload_queue_depth Current payload queue depth.\n";
+        oss << "# TYPE generator_payload_queue_depth gauge\n";
+        oss << "generator_payload_queue_depth " << payload_queue.size() << "\n";
+
+        oss << "# HELP generator_payload_queue_capacity Payload queue capacity.\n";
+        oss << "# TYPE generator_payload_queue_capacity gauge\n";
+        oss << "generator_payload_queue_capacity " << payload_queue.capacity() << "\n";
+
+        oss << "# HELP generator_payload_queue_utilization_ratio Payload queue utilization ratio.\n";
+        oss << "# TYPE generator_payload_queue_utilization_ratio gauge\n";
+        oss << "generator_payload_queue_utilization_ratio " << payload_util << "\n";
+
+        oss << "# HELP generator_requeue_depth Current requeue depth.\n";
+        oss << "# TYPE generator_requeue_depth gauge\n";
+        oss << "generator_requeue_depth " << requeue.size() << "\n";
+
+        oss << "# HELP generator_requeue_capacity Requeue capacity.\n";
+        oss << "# TYPE generator_requeue_capacity gauge\n";
+        oss << "generator_requeue_capacity " << requeue.capacity() << "\n";
+
+        oss << "# HELP generator_requeue_utilization_ratio Requeue utilization ratio.\n";
+        oss << "# TYPE generator_requeue_utilization_ratio gauge\n";
+        oss << "generator_requeue_utilization_ratio " << requeue_util << "\n";
+
+        oss << "# HELP generator_rate_limit_delay_seconds Current adaptive delay in seconds.\n";
+        oss << "# TYPE generator_rate_limit_delay_seconds gauge\n";
+        oss << "generator_rate_limit_delay_seconds " << (static_cast<double>(rate_limiter.get_delay_us()) / 1000000.0) << "\n";
+
+        oss << "# HELP generator_circuit_breaker_state Circuit breaker state (0=CLOSED,1=HALF_OPEN,2=OPEN).\n";
+        oss << "# TYPE generator_circuit_breaker_state gauge\n";
+        oss << "generator_circuit_breaker_state " << cb_state << "\n";
+
+        oss << "# HELP generator_sender_threads_active Active sender thread count.\n";
+        oss << "# TYPE generator_sender_threads_active gauge\n";
+        oss << "generator_sender_threads_active " << sender_threads_active.load(memory_order_relaxed) << "\n";
+
+        http_request_duration_hist.append_prometheus(
+            oss,
+            "generator_http_request_duration_seconds",
+            "HTTP request duration in seconds."
+        );
+        batch_wait_duration_hist.append_prometheus(
+            oss,
+            "generator_batch_wait_duration_seconds",
+            "Batch wait duration before flush in seconds."
+        );
+
+        return oss.str();
+    }
+
     void run() {
         if (event_queue.empty()) {
             cout << "No events to simulate." << endl;
@@ -1428,6 +1821,7 @@ public:
         int64_t sim_start_ts = event_queue.top().event_time_us;
         cout << ">>> First Event Time (Unix us): " << sim_start_ts << endl;
         cout << ">>> First Event Time (ISO): " << format_timestamp(sim_start_ts) << endl;
+        event_queue_remaining.store(event_queue.size(), memory_order_relaxed);
 
         cout << "[DEBUG] Creating queues..." << endl;
         // Initialize queues
@@ -1443,6 +1837,15 @@ public:
                                        circuit_breaker_timeout_sec);
         DeadLetterQueue dlq(dlq_filepath);
         cout << "[DEBUG] Resilience objects created" << endl;
+
+        MetricsHttpServer metrics_server(
+            metrics_port,
+            [this, &payload_queue, &requeue, &rate_limiter, &circuit_breaker, &dlq]() {
+                return render_prometheus_metrics(payload_queue, requeue, rate_limiter, circuit_breaker, dlq);
+            }
+        );
+        metrics_server.start();
+        cout << "[DEBUG] Metrics endpoint: /metrics on port " << metrics_port << endl;
 
         cout << "[DEBUG] Starting metrics thread..." << endl;
         // Metrics reporting thread
@@ -1484,6 +1887,7 @@ public:
         for (size_t i = 0; i < sender_count; ++i) {
             cout << "[DEBUG] Creating sender thread " << i << endl;
             senders.emplace_back([this, i, &payload_queue, &requeue, &rate_limiter, &circuit_breaker, &dlq]() {
+                sender_threads_active.fetch_add(1, memory_order_relaxed);
                 if (i == 0) {
                     cout << "[DEBUG] Sender thread 0 started with batching (size=" << batch_size
                          << ", timeout=" << batch_timeout_ms << "ms)" << endl;
@@ -1537,6 +1941,7 @@ public:
                             }
                             break;  // Both queues closed
                         }
+                        requeue_dequeued_total.fetch_add(1, memory_order_relaxed);
 
                         // Requeue items bypass batching (already failed once, don't delay further)
                         if (i == 0) {
@@ -1567,6 +1972,7 @@ public:
                         }
                     }
                 }
+                sender_threads_active.fetch_sub(1, memory_order_relaxed);
             });
         }
         cout << "[DEBUG] All sender threads created" << endl;
@@ -1589,10 +1995,12 @@ public:
         // Stop metrics thread
         metrics_running.store(false);
         metrics_thread.join();
+        metrics_server.stop();
 
         // Final summary
         cout << ">>> Simulation Completed <<<" << endl;
-        cout << ">>> Events sent: " << events_sent.load() << endl;
+        cout << ">>> Events scheduled: " << events_scheduled.load() << endl;
+        cout << ">>> Events delivered(2xx): " << events_sent_success_total.load() << endl;
         cout << ">>> PICKUP: " << pickup_count.load()
              << ", IN_TRANSIT: " << transit_count.load()
              << ", DROPOFF: " << dropoff_count.load() << endl;
@@ -1681,7 +2089,7 @@ private:
                     cout << "[DEBUG] Push succeeded!" << endl;
                 }
                 event_queue.pop();
-                events_sent.fetch_add(1, memory_order_relaxed);
+                events_scheduled.fetch_add(1, memory_order_relaxed);
                 
                 // Update stats
                 switch (ev.type) {
@@ -1697,6 +2105,7 @@ private:
                         event_queue.push({EventType::IN_TRANSIT, next_time, ev.raw_data});
                     }
                 }
+                event_queue_remaining.store(event_queue.size(), memory_order_relaxed);
                 
                 processed++;
                 
@@ -1805,9 +2214,12 @@ private:
                     dlq.write(item.payload, item.retry_count);
                     lock_guard<mutex> lock(log_mu);
                     cerr << "[DLQ] Circuit open, requeue full, wrote to DLQ" << endl;
+                } else {
+                    requeue_enqueued_total.fetch_add(1, memory_order_relaxed);
                 }
             } else {
                 // Max retries exceeded -> DLQ
+                retry_exhausted_total.fetch_add(1, memory_order_relaxed);
                 dlq.write(item.payload, item.retry_count);
                 lock_guard<mutex> lock(log_mu);
                 cerr << "[DLQ] Max retries exceeded, wrote to DLQ" << endl;
@@ -1826,15 +2238,19 @@ private:
             cout << "[NET] " << item.payload << endl;
             rate_limiter.record_response(200);
             circuit_breaker.record_result(200);
+            observe_http_result(200, 1, 0.0);
             return;
         }
 
         int status_code = 0;
+        auto request_start = steady_clock::now();
         bool success = http_post_json(ingestion_endpoint, item.payload, status_code, max_failures);
+        double request_duration_seconds = duration<double>(steady_clock::now() - request_start).count();
 
         // 4. Record metrics
         rate_limiter.record_response(status_code);
         circuit_breaker.record_result(status_code);
+        observe_http_result(status_code, 1, request_duration_seconds);
 
         // 5. Handle failure
         if (!success) {
@@ -1847,15 +2263,19 @@ private:
                         dlq.write(item.payload, item.retry_count);
                         lock_guard<mutex> lock(log_mu);
                         cerr << "[DLQ] Requeue full after failure, wrote to DLQ" << endl;
+                    } else {
+                        requeue_enqueued_total.fetch_add(1, memory_order_relaxed);
                     }
                 } else {
                     // Max retries exceeded -> DLQ
+                    retry_exhausted_total.fetch_add(1, memory_order_relaxed);
                     dlq.write(item.payload, item.retry_count);
                     lock_guard<mutex> lock(log_mu);
                     cerr << "[DLQ] Max retries exceeded after failure, wrote to DLQ" << endl;
                 }
             } else {
                 // Client error (4xx except 429) -> log and drop (our fault)
+                dropped_non_retryable_total.fetch_add(1, memory_order_relaxed);
                 lock_guard<mutex> lock(log_mu);
                 cerr << "[NET] Client error (dropped): status=" << status_code << endl;
             }
@@ -1881,8 +2301,11 @@ private:
                     item.increment_retry();
                     if (!requeue.push(std::move(item))) {
                         dlq.write(item.payload, item.retry_count);
+                    } else {
+                        requeue_enqueued_total.fetch_add(1, memory_order_relaxed);
                     }
                 } else {
+                    retry_exhausted_total.fetch_add(1, memory_order_relaxed);
                     dlq.write(item.payload, item.retry_count);
                 }
             }
@@ -1904,19 +2327,25 @@ private:
             rate_limiter.record_response(200);
             circuit_breaker.record_result(200);
             batch_metrics.record_batch(batch.size(), wait_time_us);
+            batch_wait_duration_hist.observe_seconds(static_cast<double>(wait_time_us) / 1000000.0);
+            observe_http_result(200, batch.size(), 0.0);
             return;
         }
 
         int status_code = 0;
+        auto request_start = steady_clock::now();
         bool success = http_post_json_batch(ingestion_endpoint, batch,
                                             status_code, max_failures);
+        double request_duration_seconds = duration<double>(steady_clock::now() - request_start).count();
 
         // 4. Record metrics
         rate_limiter.record_response(status_code);
         circuit_breaker.record_result(status_code);
+        observe_http_result(status_code, batch.size(), request_duration_seconds);
 
         if (success) {
             batch_metrics.record_batch(batch.size(), wait_time_us);
+            batch_wait_duration_hist.observe_seconds(static_cast<double>(wait_time_us) / 1000000.0);
             return;
         }
 
@@ -1940,13 +2369,17 @@ private:
                     item.increment_retry();
                     if (!requeue.push(std::move(item))) {
                         dlq.write(item.payload, item.retry_count);
+                    } else {
+                        requeue_enqueued_total.fetch_add(1, memory_order_relaxed);
                     }
                 } else {
+                    retry_exhausted_total.fetch_add(1, memory_order_relaxed);
                     dlq.write(item.payload, item.retry_count);
                 }
             }
         } else {
             // Other client errors (401, 403, 404, etc.) - drop all
+            dropped_non_retryable_total.fetch_add(batch.size(), memory_order_relaxed);
             lock_guard<mutex> lock(log_mu);
             cerr << "[BATCH] Client error on batch: status=" << status_code
                  << ", size=" << batch.size() << " (dropped)" << endl;

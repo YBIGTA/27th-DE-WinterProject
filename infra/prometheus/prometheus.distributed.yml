@@ -2,6 +2,9 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
 scrape_configs:
   - job_name: "prometheus"
     static_configs:
@@ -9,12 +12,24 @@ scrape_configs:
 
   - job_name: "kafka"
     static_configs:
-      # Kafka brokers - JMX metrics via exporter
-      - targets:
-          - "${KAFKA_1_IP}:9308"
+      - targets: ["kafka-exporter:9308"]
         labels:
-          broker: "kafka-1"
-          instance: "${KAFKA_1_IP}"
+          service: "kafka-exporter"
+
+  - job_name: "kafka-jmx"
+    static_configs:
+      - targets:
+          - "${KAFKA_1_IP}:${KAFKA_1_JMX_EXPORTER_PORT:-9404}"
+        labels:
+          service: "kafka-jmx-1"
+      - targets:
+          - "${KAFKA_2_IP}:${KAFKA_2_JMX_EXPORTER_PORT:-9405}"
+        labels:
+          service: "kafka-jmx-2"
+      - targets:
+          - "${KAFKA_3_IP}:${KAFKA_3_JMX_EXPORTER_PORT:-9406}"
+        labels:
+          service: "kafka-jmx-3"
 
   - job_name: "ingestor"
     metrics_path: /actuator/prometheus
@@ -26,18 +41,26 @@ scrape_configs:
         labels:
           service: "ingestor"
 
+  - job_name: "generator"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "${GENERATOR_IP}:${GENERATOR_METRICS_PORT:-9108}"
+        labels:
+          service: "generator"
+
   - job_name: "nginx"
     static_configs:
       - targets:
-          - "${NGINX_IP}:${NGINX_LB_PORT}"
+          - "${NGINX_IP}:${NGINX_EXPORTER_PORT:-9113}"
         labels:
-          service: "nginx-lb"
+          service: "nginx-exporter"
 
   - job_name: "clickhouse"
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "${CLICKHOUSE_IP}:9363"
+          - "${CLICKHOUSE_IP}:${CLICKHOUSE_PROMETHEUS_PORT:-9363}"
         labels:
           service: "clickhouse"
 
@@ -45,6 +68,26 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "${FLINK_IP}:${FLINK_JOBMANAGER_PORT}"
+          - "${FLINK_IP}:${FLINK_JOBMANAGER_METRICS_PORT:-9249}"
         labels:
           service: "flink-jobmanager"
+      - targets:
+          - "${FLINK_IP}:${FLINK_TASKMANAGER_1_METRICS_PORT:-9250}"
+        labels:
+          service: "flink-taskmanager-1"
+      - targets:
+          - "${FLINK_IP}:${FLINK_TASKMANAGER_2_METRICS_PORT:-9251}"
+        labels:
+          service: "flink-taskmanager-2"
+      - targets:
+          - "${FLINK_IP}:${FLINK_TASKMANAGER_3_METRICS_PORT:-9252}"
+        labels:
+          service: "flink-taskmanager-3"
+
+  - job_name: "promtail-loki"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "${LOKI_IP}:${PROMTAIL_LOKI_PORT:-9084}"
+        labels:
+          service: "promtail-loki"

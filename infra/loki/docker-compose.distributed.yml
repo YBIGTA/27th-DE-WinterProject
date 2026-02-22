@@ -18,15 +18,20 @@ services:
     image: grafana/promtail:3.3.2
     container_name: promtail-loki
     privileged: true
+    ports:
+      - "${PROMTAIL_LOKI_PORT:-9084}:9080"
     volumes:
       - ./promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker:/var/lib/docker:ro
+      - ../../services/generator/data:/var/log/generator:ro
     command: -config.file=/etc/promtail/config.yml
     depends_on:
       - loki
     networks:
-      - kafka-network
+      kafka-network:
+        aliases:
+          - promtail-loki
 
 networks:
   kafka-network:

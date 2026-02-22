@@ -5,4 +5,16 @@
     <!-- 더 심하면 insert를 에러로 거절 (보호) -->
     <parts_to_throw_insert>4000</parts_to_throw_insert>
   </merge_tree>
+
+  <!-- Built-in Prometheus endpoint (official ClickHouse support) -->
+  <prometheus>
+    <port>9363</port>
+    <endpoint>/metrics</endpoint>
+    <metrics>true</metrics>
+    <asynchronous_metrics>true</asynchronous_metrics>
+    <events>true</events>
+    <errors>true</errors>
+    <histograms>true</histograms>
+    <dimensional_metrics>true</dimensional_metrics>
+  </prometheus>
 </clickhouse>

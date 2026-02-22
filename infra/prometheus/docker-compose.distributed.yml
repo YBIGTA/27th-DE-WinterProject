@@ -9,9 +9,23 @@ services:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus.distributed.yml:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./rules:/etc/prometheus/rules:ro
       - ./entrypoint.sh:/entrypoint.sh:ro
       - prometheus_data:/prometheus
     entrypoint: /entrypoint.sh
+    networks:
+      - kafka-network
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka-exporter
+    env_file:
+      - ../../config/.env
+    restart: unless-stopped
+    command:
+      - "--kafka.server=${KAFKA_1_IP}:${KAFKA_1_EXTERNAL_PORT:-9092}"
+      - "--kafka.server=${KAFKA_2_IP}:${KAFKA_2_EXTERNAL_PORT:-9094}"
+      - "--kafka.server=${KAFKA_3_IP}:${KAFKA_3_EXTERNAL_PORT:-9096}"
     networks:
       - kafka-network
 
@@ -28,6 +42,7 @@ services:
     command: -config.file=/etc/promtail/config.yml -config.expand-env=true
     depends_on:
       - prometheus
+      - kafka-exporter
     networks:
       - kafka-network
 
