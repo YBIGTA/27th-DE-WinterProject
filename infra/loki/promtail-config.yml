@@ -20,6 +20,12 @@ scrape_configs:
       - target_label: 'job'
         replacement: 'docker'
       - source_labels: ['__meta_docker_container_name']
+        regex: '/(promtail|loki).*'
+        action: drop
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(kafka-[123]|ingestor-[123]|clickhouse|flink-jobmanager|flink-taskmanager|kafka-ui|nginx).*'
+        action: keep
+      - source_labels: ['__meta_docker_container_name']
         target_label: 'container'
         regex: '/(.*)'
         replacement: '$1'
