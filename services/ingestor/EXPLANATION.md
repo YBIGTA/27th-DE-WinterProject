@@ -24,7 +24,7 @@ An ingestion gateway that receives TaxiEvents from the Generator over HTTP, buff
 
 ## I/O Flow
 ```
-[Generator (C++)] --(HTTP POST /ingest, JSON)--> [Nginx LB] --(random two least_conn)--> [Ingestor x3] --(Reactor Kafka, key=tripId)--> [Kafka: taxi-event-data]
+[Generator (C++)] --(HTTP POST /ingest, JSON)--> [Nginx LB] --(least_conn)--> [Ingestor x3] --(Reactor Kafka, key=tripId)--> [Kafka: taxi-event-data]
 ```
 
 ## Implementation Logic
@@ -32,7 +32,7 @@ An ingestion gateway that receives TaxiEvents from the Generator over HTTP, buff
 ### Data Flow
 ```mermaid
 flowchart TD
-    G[Generator] -->|POST /ingest or /ingest/batch| N[Nginx random two least_conn LB]
+    G[Generator] -->|POST /ingest or /ingest/batch| N[Nginx least_conn LB]
     N -->|route| I1[Ingestor-1]
     N -->|route| I2[Ingestor-2]
     N -->|route| I3[Ingestor-3]
@@ -140,7 +140,7 @@ flowchart TD
 | `bufferTimeout` (code default 500 events / 10ms, tunable) | Dramatically reduces Kafka network round-trips compared to sending events individually | Introduces batching latency up to the configured timeout |
 | `acks=1` (leader only) | Maximizes throughput | Acknowledged messages can be lost if the leader fails before replication |
 | LZ4 compression | Reduces network bandwidth with minimal CPU overhead | Lower compression ratio than Snappy or Gzip |
-| Nginx `random two least_conn` | Balances fairness and lower scheduling overhead under high concurrency | Adds randomness, so assignment is less globally optimal than full least-conn |
+| Nginx `least_conn` | Prefers less-loaded ingestors and reduces skew when response time differs | Very low concurrency traffic can still show short-term imbalance |
 | 3-instance cluster | Horizontally scales both buffer capacity and Kafka send throughput beyond a single instance | Each instance holds an independent Sink, so event ordering by `tripId` is not guaranteed at the cluster level |
 | `stopOnError(false)` on KafkaSender | A single event's serialization or send failure does not terminate the entire pipeline | Failed events are written to the DLQ instead of being silently skipped |
 | File-based DLQ for serialization failures | Events that fail JSON serialization are persisted to a JSONL file for inspection and replay, rather than being silently discarded | Uses `event.toString()` (Lombok-generated) since `ObjectMapper` is the thing that failed; manual JSON build avoids dependency on the failing serializer |
@@ -156,6 +156,6 @@ flowchart TD
 | Kafka sender stream error | Error signal from `kafkaSender.send(records)` Flux | `Retry.backoff(3, 100ms, max 2s)` retries the batch send; if still failing, batch-level error is logged. |
 | JSON serialization failure | Exception thrown by `ObjectMapper.writeValueAsString()` | The affected event is written to the file-based DLQ (`DeadLetterQueue`), `eventsFailed` increments, and the event is skipped for Kafka (`Mono.empty()`); the rest of the batch continues. |
 | Pipeline subscription termination | Terminal `onError` signal in the Flux chain | `.retry()` automatically re-subscribes to the pipeline. |
-| Ingestor instance crash / upstream failure | Upstream connection errors / 502/503/504 at Nginx; container healthcheck (`GET /health`) also marks unhealthy at compose level (10 s interval, 3 retries) | Nginx `random two least_conn` + request-level retry (`proxy_next_upstream`, max 2 tries) routes traffic to remaining instances. |
+| Ingestor instance crash / upstream failure | Upstream connection errors / 502/503/504 at Nginx; container healthcheck (`GET /health`) also marks unhealthy at compose level (10 s interval, 3 retries) | Nginx `least_conn` + request-level retry (`proxy_next_upstream`, max 2 tries) routes traffic to remaining instances. |
 | Graceful shutdown | JVM shutdown hook + Spring `@PreDestroy` | Sink is completed, pipeline drains for up to 5 s, then `KafkaSender` and `DeadLetterQueue` are closed. |
 | Kafka broker unavailable at startup | `KafkaSender` uses a lazy connection | The application starts without blocking. Actual send failures are covered by the retry policy. |

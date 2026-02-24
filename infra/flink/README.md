@@ -22,13 +22,12 @@ cp config/.env.single-machine config/.env
 Job JAR을 이미지에 포함시켜 `docker compose up` 시 자동으로 Job이 시작된다.
 
 ```bash
-# 1. JAR 빌드 (최초 또는 코드 변경 시)
-cd services/flink-job && mvn clean package && cd ../..
-
-# 2. single-machine — 이미지 빌드 + 컨테이너 시작 (Job 자동 실행)
+# 1. single-machine — 이미지 빌드 + 컨테이너 시작 (Job 자동 실행)
+# 참고: Dockerfile 빌드 단계에서 mvn clean package가 자동 실행됨
 docker compose -f infra/flink/docker-compose.yml --env-file config/.env up --build
 
-# distributed
+# 2. distributed — 각 Flink 머신에서 최신 코드 기준으로 자기 서비스만 기동
+# 참고: 실행 전 각 머신에서 git pull로 커밋을 맞춘다.
 docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-jobmanager
 
 docker compose -f infra/flink/docker-compose.distributed.yml --env-file config/.env up -d --build flink-taskmanager-1

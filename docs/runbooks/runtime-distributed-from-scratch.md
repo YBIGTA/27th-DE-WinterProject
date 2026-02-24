@@ -158,12 +158,13 @@ curl -sf "http://${NGINX_IP}:${NGINX_LB_PORT}/health"
 
 ### 3.4 Flink (F1/F2/F3/F4)
 
-사전 빌드(각 Flink 머신에서 권장):
+사전 준비(각 Flink 머신 공통):
 
 ```bash
-cd services/flink-job
-mvn clean package
-cd ../..
+# 최신 코드 동기화
+git pull
+
+# 참고: Dockerfile 빌드 단계에서 mvn clean package가 자동 실행됨
 ```
 
 기동:
@@ -208,7 +209,8 @@ docker inspect -f '{{.Name}} {{.Image}}' flink-taskmanager-3
 - `FLINK_JOBMANAGER_RPC_PORT`는 TaskManager가 접속할 JobManager RPC 포트 (기본 `6129`)
 - `FLINK_TASKMANAGER_1_IP`, `FLINK_TASKMANAGER_2_IP`, `FLINK_TASKMANAGER_3_IP`는 각 TaskManager 호스트 IP이며 Flink가 외부에 광고하는 주소로도 사용됩니다.
 - `FLINK_TASKMANAGER_1_DATA_PORT`, `FLINK_TASKMANAGER_2_DATA_PORT`, `FLINK_TASKMANAGER_3_DATA_PORT`는 TaskManager 간 shuffle 데이터 포트입니다.
-- 4대(F1~F4)의 Flink 이미지 SHA(`docker inspect -f '{{.Image}}' ...`)는 반드시 동일해야 합니다. 다르면 `Invalid lambda deserialization`로 반복 재시작됩니다.
+- 4대(F1~F4)는 반드시 동일한 git commit에서 실행해야 합니다. (`git rev-parse --short HEAD`)
+- 코드/의존성 불일치가 생기면 `Invalid lambda deserialization`로 반복 재시작될 수 있습니다.
 - `taskmanagers` API 결과에 `172.x.x.x` 같은 컨테이너 내부 IP가 보이면 distributed 네트워크 설정이 잘못된 상태입니다.
 
 ### 3.5 Generator (G)

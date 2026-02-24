@@ -97,7 +97,7 @@ scrape_configs:
                     action: inc
                     value: "5"
       - match:
-          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*ingestor-1:"'
+          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*(ingestor-1:|${INGESTOR_1_IP}:${INGESTOR_1_PORT})"'
           stages:
             - metrics:
                 upstream_1_requests_total:
@@ -108,7 +108,7 @@ scrape_configs:
                     match_all: true
                     action: inc
       - match:
-          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*ingestor-2:"'
+          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*(ingestor-2:|${INGESTOR_2_IP}:${INGESTOR_2_PORT})"'
           stages:
             - metrics:
                 upstream_2_requests_total:
@@ -119,7 +119,7 @@ scrape_configs:
                     match_all: true
                     action: inc
       - match:
-          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*ingestor-3:"'
+          selector: '{container="ingestor-lb"} |~ "upstream_addr=.*(ingestor-3:|${INGESTOR_3_IP}:${INGESTOR_3_PORT})"'
           stages:
             - metrics:
                 upstream_3_requests_total:

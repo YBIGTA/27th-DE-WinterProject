@@ -15,7 +15,7 @@ core_files:
 # Nginx Load Balancer
 
 ## Role
-Receives generator HTTP ingest traffic and forwards it to three ingestor replicas using `random two least_conn` with upstream retry settings.
+Receives generator HTTP ingest traffic and forwards it to three ingestor replicas using `least_conn` with upstream retry settings.
 
 ## I/O Flow
 ```
@@ -55,7 +55,7 @@ flowchart TD
    - Distributed template:
      - `/health` -> immediate `200 OK` from Nginx.
      - all other paths -> proxy to `upstream ingestors`.
-3. Select upstream by `random two least_conn`.
+3. Select upstream by `least_conn`.
 4. Forward request with preserved client headers (`Host`, `X-Real-IP`, `X-Forwarded-For`, and in single-machine config also `X-Forwarded-Proto`).
 5. On upstream errors/timeouts/502/503/504, retry another upstream up to `proxy_next_upstream_tries 2`.
 6. Return upstream response status/body to caller and write access logs with upstream timing/status fields.
@@ -73,14 +73,14 @@ flowchart TD
   - Access log entries with `upstream_addr`, `upstream_status`, `request_time`, `upstream_response_time`.
 - **Invariants:**
   - Exactly three upstream targets are configured in both modes.
-  - Load-balancing policy is always `random two least_conn`.
+  - Load-balancing policy is always `least_conn`.
   - Upstream retry policy is always `error timeout http_502 http_503 http_504` with max `2` tries.
   - Distributed mode upstream addresses are resolved from `.env` variables through `envsubst` at container start.
 
 ## Design Decisions
 | Decision | Why | Trade-off |
 |----------|-----|-----------|
-| `random two least_conn` upstream policy | Reduces global contention vs pure least-conn while still preferring less-loaded backends | Adds randomness, so assignment can be less globally optimal than full least-conn scans |
+| `least_conn` upstream policy | Prefers less-loaded ingestors and reduces skew under uneven response times | Very low concurrency traffic can still show short-term imbalance |
 | Request-level failover (`proxy_next_upstream`, `proxy_next_upstream_tries`) | Retries transient upstream failures without extra modules | No long-term upstream quarantine; persistent failures still need external remediation |
 | Keepalive upstream pool (`keepalive 64`) | Reduces TCP connection setup overhead to ingestors | Consumes persistent upstream connection slots/memory |
 | Distributed config via `envsubst` template | One template supports multiple machine IP/port deployments | Startup depends on complete `.env` variables; missing vars can break generated config |
