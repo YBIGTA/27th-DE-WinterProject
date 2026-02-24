@@ -33,6 +33,17 @@ services:
     networks:
       - kafka-network
 
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    depends_on:
+      - promtail
+    networks:
+      - kafka-network
+
   promtail:
     image: grafana/promtail:3.3.2
     container_name: promtail-prometheus

@@ -40,8 +40,12 @@ sed \
   -e "s|\${KAFKA_3_EXTERNAL_PORT}|${KAFKA_3_EXTERNAL_PORT}|g" \
   -e "s|\${KAFKA_3_JMX_EXPORTER_PORT:-9406}|${KAFKA_3_JMX_EXPORTER_PORT:-9406}|g" \
   -e "s|\${CLICKHOUSE_IP}|${CLICKHOUSE_IP}|g" \
+  -e "s|\${CLICKHOUSE_HTTP_PORT:-8123}|${CLICKHOUSE_HTTP_PORT:-8123}|g" \
   -e "s|\${CLICKHOUSE_PROMETHEUS_PORT:-9363}|${CLICKHOUSE_PROMETHEUS_PORT:-9363}|g" \
+  -e "s|\${GRAFANA_IP}|${GRAFANA_IP}|g" \
+  -e "s|\${GRAFANA_PORT:-3000}|${GRAFANA_PORT:-3000}|g" \
   -e "s|\${LOKI_IP}|${LOKI_IP}|g" \
+  -e "s|\${LOKI_PORT:-3100}|${LOKI_PORT:-3100}|g" \
   -e "s|\${PROMTAIL_LOKI_PORT:-9084}|${PROMTAIL_LOKI_PORT:-9084}|g" \
   /etc/prometheus/prometheus.yml.tmpl > /tmp/prometheus.yml
 

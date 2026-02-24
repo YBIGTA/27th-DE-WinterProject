@@ -183,6 +183,9 @@ scrape_configs:
           type:
           stage:
     relabel_configs:
+      - target_label: job
+        replacement: docker
+
       - source_labels: [__meta_docker_container_name]
         regex: '/(promtail|loki).*'
         action: drop

@@ -7,7 +7,7 @@ positions:
 
 clients:
   # 중앙 Loki 서버로 전송
-  # envsubst로 ${LOKI_IP}:${LOKI_PORT}로 자동 치환됨
+  # promtail `-config.expand-env=true`로 ${LOKI_IP}:${LOKI_PORT} 확장
   - url: http://${LOKI_IP}:${LOKI_PORT}/loki/api/v1/push
 
 scrape_configs:
@@ -187,6 +187,9 @@ scrape_configs:
           stage:
     
     relabel_configs:
+      - target_label: job
+        replacement: docker
+
       # 분산 배포: self-scrape 방지를 위해 promtail은 제외
       - source_labels: [__meta_docker_container_name]
         regex: '/promtail.*'
