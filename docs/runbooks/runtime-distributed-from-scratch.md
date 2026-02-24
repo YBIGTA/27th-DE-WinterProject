@@ -147,13 +147,33 @@ docker compose -f services/ingestor/docker-compose.distributed.yml --env-file co
 docker compose -f infra/nginx/docker-compose.distributed.yml --env-file config/.env up nginx-lb
 ```
 
+동거 배치 보정(선택):
+- N 머신에서 `nginx-lb`와 일부 ingestor를 같은 호스트에 같이 띄우는 경우, LB 컨테이너가 자기 호스트 IP로 재진입(hairpin)하면서 편향/실패가 날 수 있습니다.
+- 현재 distributed nginx 엔트리포인트는 `INGESTOR_n_IP == NGINX_IP`이면 자동으로 `ingestor-n:8080`(컨테이너 DNS)로 라우팅합니다.
+- 자동 판별이 맞지 않는 환경에서만 아래 오버라이드를 수동 지정하세요.
+
+```bash
+# 예: N 머신이 ingestor-1,3을 함께 실행하고 ingestor-2는 원격 머신인 경우
+INGESTOR_1_UPSTREAM_HOST=ingestor-1
+INGESTOR_1_UPSTREAM_PORT=8080
+INGESTOR_3_UPSTREAM_HOST=ingestor-3
+INGESTOR_3_UPSTREAM_PORT=8080
+# INGESTOR_2_* 는 미설정 시 기존 INGESTOR_2_IP:INGESTOR_2_PORT 사용
+```
+
 검증:
 
 ```bash
+# 각 머신(E1/E2/E3)에서 직접 확인
 curl -sf "http://${INGESTOR_1_IP}:${INGESTOR_1_PORT}/health"
 curl -sf "http://${INGESTOR_2_IP}:${INGESTOR_2_PORT}/health"
 curl -sf "http://${INGESTOR_3_IP}:${INGESTOR_3_PORT}/health"
 curl -sf "http://${NGINX_IP}:${NGINX_LB_PORT}/health"
+
+# 머신 N: LB 컨테이너 내부에서 각 upstream 직접 확인
+docker exec ingestor-lb sh -lc 'wget -qO- "http://${INGESTOR_1_UPSTREAM_HOST:-$INGESTOR_1_IP}:${INGESTOR_1_UPSTREAM_PORT:-$INGESTOR_1_PORT}/health"'
+docker exec ingestor-lb sh -lc 'wget -qO- "http://${INGESTOR_2_UPSTREAM_HOST:-$INGESTOR_2_IP}:${INGESTOR_2_UPSTREAM_PORT:-$INGESTOR_2_PORT}/health"'
+docker exec ingestor-lb sh -lc 'wget -qO- "http://${INGESTOR_3_UPSTREAM_HOST:-$INGESTOR_3_IP}:${INGESTOR_3_UPSTREAM_PORT:-$INGESTOR_3_PORT}/health"'
 ```
 
 ### 3.4 Flink (F1/F2/F3/F4)

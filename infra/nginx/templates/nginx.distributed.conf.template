@@ -12,9 +12,9 @@ http {
 
     upstream ingestors {
         least_conn;
-        server ${INGESTOR_1_IP}:${INGESTOR_1_PORT};
-        server ${INGESTOR_2_IP}:${INGESTOR_2_PORT};
-        server ${INGESTOR_3_IP}:${INGESTOR_3_PORT};
+        server ${INGESTOR_1_UPSTREAM_HOST}:${INGESTOR_1_UPSTREAM_PORT};
+        server ${INGESTOR_2_UPSTREAM_HOST}:${INGESTOR_2_UPSTREAM_PORT};
+        server ${INGESTOR_3_UPSTREAM_HOST}:${INGESTOR_3_UPSTREAM_PORT};
         keepalive 64;
     }
 

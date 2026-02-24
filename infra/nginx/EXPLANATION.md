@@ -75,7 +75,7 @@ flowchart TD
   - Exactly three upstream targets are configured in both modes.
   - Load-balancing policy is always `least_conn`.
   - Upstream retry policy is always `error timeout http_502 http_503 http_504` with max `2` tries.
-  - Distributed mode upstream addresses are resolved from `.env` variables through `envsubst` at container start.
+  - Distributed mode upstream addresses are resolved from `.env` via entrypoint + `envsubst` at container start. (`INGESTOR_{1,2,3}_UPSTREAM_HOST/PORT` 우선, 미지정 시 `INGESTOR_{1,2,3}_IP/PORT` fallback, 단 `INGESTOR_n_IP == NGINX_IP`이면 기본값을 `ingestor-n:${INGESTOR_PORT}`로 자동 전환)
 
 ## Design Decisions
 | Decision | Why | Trade-off |
@@ -83,7 +83,7 @@ flowchart TD
 | `least_conn` upstream policy | Prefers less-loaded ingestors and reduces skew under uneven response times | Very low concurrency traffic can still show short-term imbalance |
 | Request-level failover (`proxy_next_upstream`, `proxy_next_upstream_tries`) | Retries transient upstream failures without extra modules | No long-term upstream quarantine; persistent failures still need external remediation |
 | Keepalive upstream pool (`keepalive 64`) | Reduces TCP connection setup overhead to ingestors | Consumes persistent upstream connection slots/memory |
-| Distributed config via `envsubst` template | One template supports multiple machine IP/port deployments | Startup depends on complete `.env` variables; missing vars can break generated config |
+| Distributed config via entrypoint + `envsubst` (auto local-routing + override fallback) | One template supports both multi-machine IP routing and same-host container DNS routing without mandatory manual overrides | Startup depends on complete `.env` variables; wrong host IP metadata can still misroute traffic |
 | `/health` served by Nginx in both modes | Fast LB liveness check independent of ingestor status | `/health` does not represent upstream ingestor health |
 
 ## Failure Modes & Handling
